@@ -58,16 +58,16 @@ Enter LDAP Password:
 modifying entry "cn=config"
 </pre>
 <h2><a name="db-attrs"></a>Настройка параметров на уровне DIT</h2>
-<p>База данных использует определённый механизм манипуляции данными. Соответственно, запись базы данных в каталоге <code>cn=config</code> строится на специфичном для этого механизма манипуляции данными объектном классе, который является потомком общего объектного класса <code>olcDatabaseConfig</code>. Если, как в нашем случае, для базы данных используется механизм манипуляции данными <code>bdb</code>, то можно выяснить набор атрибутов для настройки этой базы данных такой командой:</p>
+<p>База данных использует определённый механизм манипуляции данными. Соответственно, запись базы данных в каталоге <code>cn=config</code> строится на специфичном для этого механизма манипуляции данными объектном классе, который является потомком общего объектного класса <code>olcDatabaseConfig</code>. Если, как в нашем случае, для базы данных используется механизм манипуляции данными <code>mdb</code>, то можно выяснить набор атрибутов для настройки этой базы данных такой командой:</p>
 <pre class="sh">
-# ldapsearch -x  -LLL -b "cn=Subschema" -s base -o ldif-wrap=no '(objectClass=*)' objectClasses | egrep "NAME 'olc(Bdb|Database)Config"
+# ldapsearch -x  -LLL -b "cn=Subschema" -s base -o ldif-wrap=no '(objectClass=*)' objectClasses | egrep "NAME 'olc(Mdb|Database)Config"
 objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.0.4 NAME 'olcDatabaseConfig' DESC 'OpenLDAP Database-specific options' SUP olcConfig STRUCTURAL MUST olcDatabase MAY ( olcHidden $ olcSuffix $ olcSubordinate $ olcAccess $ olcAddContentAcl $ olcLastMod $ olcLimits $ olcMaxDerefDepth $ olcPlugin $ olcReadOnly $ olcReplica $ olcReplicaArgsFile $ olcReplicaPidFile $ olcReplicationInterval $ olcReplogFile $ olcRequires $ olcRestrict $ olcRootDN $ olcRootPW $ olcSchemaDN $ olcSecurity $ olcSizeLimit $ olcSyncUseSubentry $ olcSyncrepl $ olcTimeLimit $ olcUpdateDN $ olcUpdateRef $ olcMirrorMode $ olcMonitoring $ olcExtraAttrs ) )
-objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.2.1.1 NAME 'olcBdbConfig' DESC 'BDB backend configuration' SUP olcDatabaseConfig STRUCTURAL MUST olcDbDirectory MAY ( olcDbCacheSize $ olcDbCheckpoint $ olcDbConfig $ olcDbCryptFile $ olcDbCryptKey $ olcDbNoSync $ olcDbDirtyRead $ olcDbIDLcacheSize $ olcDbIndex $ olcDbLinearIndex $ olcDbLockDetect $ olcDbMode $ olcDbSearchStack $ olcDbShmKey $ olcDbCacheFree $ olcDbDNcacheSize $ olcDbPageSize ) )
+objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.2.12.1 NAME 'olcMdbConfig' DESC 'MDB backend configuration' SUP olcDatabaseConfig STRUCTURAL MUST olcDbDirectory MAY ( olcDbCheckpoint $ olcDbEnvFlags $ olcDbNoSync $ olcDbIndex $ olcDbMaxReaders $ olcDbMaxSize $ olcDbMode $ olcDbSearchStack $ olcDbRtxnSize ) )
 </pre>
-<p>Описание большинства общих для всех типов баз данных атрибутов можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#database">учебнике LFRS</a>, а описание специфичных для <code>bdb</code> атрибутов настроек вынесены в <a href="//pro-ldap.ru/tr/zytrax/ch6/bdb.html">отдельную страницу того же учебника</a>.</p>
-<p>Приведём примеры настроек, которые на данном этапе производит большинство администраторов каталога: установка списков контроля доступа (ACL) и индексирование атрибутов. Для примера ACL возьмём "классическое" ограничение доступа к парольному атрибуту <code>userPassword</code>: пользователь, прошедший аутентификацию от имени DN записи каталога (владелец записи), может менять свой пароль; анонимный пользователь может использовать парольный атрибут в целях аутентификации; остальным (кроме, разумеется, rootDN каталога) доступ к парольному атрибуту запрещён. Вторым правилом установим доступ ко всем остальным атрибутам всех записей каталога: у владельца записи есть право менять содержимое любого атрибута, у всех остальных&thinsp;&mdash;&thinsp;читать содержимое любого атрибута (кроме <code>userPassword</code>). LDIF, производящий соответствующие изменения в настройках базы данных <code>olcDatabase={1}bdb,cn=config</code>, будет выглядеть так:</p>
+<p>Описание большинства общих для всех типов баз данных атрибутов можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#database">учебнике LFRS</a>, а описание специфичных для <code>mdb</code> атрибутов настроек&thinsp;&mdash;&thinsp;в <a href="//pro-ldap.ru/tr/man/slapd-mdb.5.html">man-странице slapd-mdb(5)</a>.</p>
+<p>Приведём примеры настроек, которые на данном этапе производит большинство администраторов каталога: установка списков контроля доступа (ACL) и индексирование атрибутов. Для примера ACL возьмём "классическое" ограничение доступа к парольному атрибуту <code>userPassword</code>: пользователь, прошедший аутентификацию от имени DN записи каталога (владелец записи), может менять свой пароль; анонимный пользователь может использовать парольный атрибут в целях аутентификации; остальным (кроме, разумеется, <code>rootDN</code> каталога) доступ к парольному атрибуту запрещён. Вторым правилом установим доступ ко всем остальным атрибутам всех записей каталога: у владельца записи есть право менять содержимое любого атрибута, у всех остальных&thinsp;&mdash;&thinsp;читать содержимое любого атрибута (кроме <code>userPassword</code>). LDIF, производящий соответствующие изменения в настройках базы данных <code>olcDatabase={1}mdb,cn=config</code>, будет выглядеть так:</p>
 <pre class="list">
-<code>dn: olcDatabase={1}bdb,cn=config</code>
+<code>dn: olcDatabase={1}mdb,cn=config</code>
 <code>changetype: modify</code>
 <code>add: olcAccess</code>
 <code>olcAccess: to attrs=userPassword</code>
@@ -83,46 +83,45 @@ objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.2.1.1 NAME 'olcBdbConfig' DESC 'BDB b
 <pre class="sh">
 # ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/12-add_acl.ldif
 Enter LDAP Password: 
-modifying entry "olcDatabase={1}bdb,cn=config"
+modifying entry "olcDatabase={1}mdb,cn=config"
 </pre>
 <p>Посмотрим, что получилось:</p>
 <pre class="sh">
-# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}bdb)'
+# ldapsearch -x -LLL -o ldif-wrap=no -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}mdb)'
 Enter LDAP Password: 
-dn: olcDatabase={1}bdb,cn=config
-objectClass: olcBdbConfig
-olcDatabase: {1}bdb
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
 olcSuffix: dc=mycompany,dc=ru
 olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
 olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
 olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
 olcDbIndex: objectClass eq
-olcAccess: {0}to attrs=userPassword by self write read by anonymous auth by * 
- none
+olcAccess: {0}to attrs=userPassword by self write read by anonymous auth by * none
 olcAccess: {1}to * by self write by * read
 </pre>
 <p>Наши ACL на месте. Поскольку порядок применения ACL очень важен, к значению данного атрибута добавляется индекс (порядковый номер) X-ORDERED. Дополнительную информацию по ACL можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#access">учебнике LFRS</a> и в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Access Control via Dynamic Configuration">руководстве администратора OpenLDAP</a>.</p>
 <p>Теперь определим индексы для каталога. По правде говоря, индексирование следует производить только для тех атрибутов, по которым будет производиться поиск, то есть исходя из тех задач, которые каталог решает. Лишние индексы будут только занимать место на диске и тормозить процесс внесения изменений в каталог. Для абстрактного случая мы можем проиндексировать атрибут <code>cn</code>&thinsp;&mdash;&thinsp;такой индекс наверняка пригодится. Создадим файл <code>/tmp/ldifs/13-add_index.ldif</code> такого содержания:</p>
 <pre class="list">
-<code>dn: olcDatabase={1}bdb,cn=config</code>
+<code>dn: olcDatabase={1}mdb,cn=config</code>
 <code>changetype: modify</code>
 <code>add: olcDbIndex</code>
 <code>olcDbIndex: cn eq,sub,subinitial</code>
 </pre>
-<p>Мы добавляем к настройкам базы данных <code>olcDatabase={1}bdb,cn=config</code> атрибут <code>olcDbIndex</code>, в котором указывается, что для атрибута <code>cn</code> должны быть определены индексы <code>eq</code> (поиск без поискового шаблона), <code>sub</code> и <code>subinitial</code> (два варианта оптимизации под поиск с применением поискового шаблона). Подробнее об индексах можно почитать в <a href="//pro-ldap.ru/tr/zytrax//apa/indeces.html">учебнике LFRS</a>.</p>
+<p>Мы добавляем к настройкам базы данных <code>olcDatabase={1}mdb,cn=config</code> атрибут <code>olcDbIndex</code>, в котором указывается, что для атрибута <code>cn</code> должны быть определены индексы <code>eq</code> (поиск без поискового шаблона), <code>sub</code> и <code>subinitial</code> (два варианта оптимизации под поиск с применением поискового шаблона). Подробнее об индексах можно почитать в <a href="//pro-ldap.ru/tr/zytrax//apa/indeces.html">учебнике LFRS</a>.</p>
 <p>Применим наш LDIF:</p>
 <pre class="sh">
 # ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/13-add_index.ldif 
 Enter LDAP Password: 
-modifying entry "olcDatabase={1}bdb,cn=config"
+modifying entry "olcDatabase={1}mdb,cn=config"
 </pre>
 <p>Посмотрим, что получилось:</p>
 <pre class="sh">
-# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}bdb)'
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}mdb)'
 Enter LDAP Password: 
-dn: olcDatabase={1}bdb,cn=config
-objectClass: olcBdbConfig
-olcDatabase: {1}bdb
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
 olcSuffix: dc=mycompany,dc=ru
 olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
 olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
@@ -137,5 +136,5 @@ olcAccess: {1}to * by self write by * read
 <p>На данном этапе этими настройками мы и ограничимся. В последующих главах, если не будет указано иное, подразумевается, что дальнейшая настройка каталога будет выполняться с этой исходной точки.</p>
 
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Чем заняться дальше</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;12 января 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2017 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;4 декабря 2017 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>

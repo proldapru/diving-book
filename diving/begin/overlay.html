@@ -15,20 +15,20 @@
 <p>Для одной базы данных можно определить несколько наложений. Если Вы определяете несколько наложений для базы данных, возможно, будет иметь значение порядок применения наложений. Как и для большинства других записей каталога <code>cn=config</code>, упорядочивание наложений производится добавлением индекса X-ORDERED в фигурных скобках к значению атрибута <code>olcOverlay</code>, образующему RDN наложения. Соответственно, все те правила, которые применяются к атрибутам X-ORDERED, действительны и для наложений.</p>
 <p>Наложения различаются не только своим функционалом, но и тем, какое количество действий требуется произвести для их добавления. В общем случае нужно выполнить следующие шаги:</p>
 <ol>
-<li>загрузить динамический модуль, реализующий наложение;</li>
-<li>добавить набор схемы, необходимый для работы наложения;</li>
-<li>добавить запись наложения к записи пользовательской базы данных (или базы данных frontend);</li>
-<li>добавить атрибуты настройки наложения в запись наложения;</li>
-<li>добавить в пользовательскую базу данных записи, необходимые для работы наложения.</li>
+<li>Загрузить динамический модуль, реализующий наложение;</li>
+<li>Добавить набор схемы, необходимый для работы наложения;</li>
+<li>Добавить запись наложения к записи пользовательской базы данных (или базы данных <code>frontend</code>);</li>
+<li>Добавить атрибуты настройки наложения в запись наложения;</li>
+<li>Добавить в пользовательскую базу данных записи, необходимые для работы наложения.</li>
 </ol>
 <p>Ко всем этим пунктам (кроме третьего) можно добавить "при необходимости", поскольку модуль наложения может быть статически вкомпилирован в <code>slapd</code>, дополнительного набора схемы может не требоваться, наложение может не иметь настроек или записей в пользовательской базе данных. Кроме того, порядок применения перечисленных шагов может быть плавающий. Так что относитесь к этому алгоритму творчески и выполняйте только те шаги, которые действительно необходимы.</p>
 <p>В качестве примера рассмотрим наложение ppolicy, добавление которого охватывает все шаги нашего алгоритма.</p>
 <h2>Добавление наложения ppolicy к пользовательской базе данных</h2>
 <p>Первый шаг,&thinsp;&mdash;&thinsp;загрузка динамического модуля для наложения ppolicy,&thinsp;&mdash;&thinsp;подробно описан нами ранее в качестве иллюстрации <a href="module.html#additional-modules">добавления еще одного динамического модуля к имеющимся</a>. Если наложение ppolicy было статически вкомпилировано в slapd на этапе сборки, этот шаг не требуется.</p>
 <p>Второй шаг,&thinsp;&mdash;&thinsp;добавление набора схемы данных для наложения ppolicy,&thinsp;&mdash;&thinsp;подробно описан нами ранее в качестве иллюстрации <a href="schema.html#additional-schema">добавления еще одного набора схемы к имеющимся</a>.</p>
-<p>Для наложения ppolicy мы добавляем к записи определения пользовательской базы данных <code>olcDatabase={1}bdb,cn=config</code> дочернюю запись, основанную на объектном классе <code>olcPPolicyConfig</code>. В простейшем виде LDIF для добавления записи наложения будет выглядеть так:</p>
+<p>Для наложения ppolicy мы добавляем к записи определения пользовательской базы данных <code>olcDatabase={1}mdb,cn=config</code> дочернюю запись, основанную на объектном классе <code>olcPPolicyConfig</code>. В простейшем виде LDIF для добавления записи наложения будет выглядеть так:</p>
 <pre class="list">
-<code>dn: olcOverlay=ppolicy,olcDatabase={1}bdb,cn=config</code>
+<code>dn: olcOverlay=ppolicy,olcDatabase={1}mdb,cn=config</code>
 <code>objectClass: olcPPolicyConfig</code>
 <code>olcOverlay: ppolicy</code>
 </pre>
@@ -67,7 +67,7 @@ pwdInHistory: 3
 </pre>
 <p>Теперь мы можем расширить наш LDIF для добавления наложения ppolicy, добавив туда DN нашей записи с политикой по умолчанию как значение атрибута <code>olcPPolicyDefault</code>:</p>
 <pre class="list">
-<code>dn: olcOverlay=ppolicy,olcDatabase={1}bdb,cn=config</code>
+<code>dn: olcOverlay=ppolicy,olcDatabase={1}mdb,cn=config</code>
 <code>objectClass: olcPPolicyConfig</code>
 <code>olcOverlay: ppolicy</code>
 <code>olcPPolicyDefault: cn=PPolicy Default,ou=System,dc=mycompany,dc=ru</code>
@@ -76,19 +76,19 @@ pwdInHistory: 3
 <pre class="sh">
 # ldapadd -x -D 'cn=config' -W -f /tmp/ldifs/103-ppolicy_add_overlay_to_db.ldif
 Enter LDAP Password: 
-adding new entry "olcOverlay=ppolicy,olcDatabase={1}bdb,cn=config"
+adding new entry "olcOverlay=ppolicy,olcDatabase={1}mdb,cn=config"
 </pre>
 <p>Посмотрим, что получилось:</p>
-<pre class="sh"># ldapsearch -x -LLL -D 'cn=config' -W -b 'olcDatabase={1}bdb,cn=config' '(olcOverlay=*)'
+<pre class="sh"># ldapsearch -x -LLL -D 'cn=config' -W -b 'olcDatabase={1}mdb,cn=config' '(olcOverlay=*)'
 Enter LDAP Password: 
-dn: olcOverlay={0}ppolicy,olcDatabase={1}bdb,cn=config
+dn: olcOverlay={0}ppolicy,olcDatabase={1}mdb,cn=config
 objectClass: olcPPolicyConfig
 olcOverlay: {0}ppolicy
 olcPPolicyDefault: cn=PPolicy Default,ou=System,dc=mycompany,dc=ru
 </pre>
 <p>Поскольку это наше первое наложение для базы данных, оно получило индекс <code>{0}</code>. Теперь попробуем расширить запись наложения ppolicy, добавив новую настройку в виде атрибута <code>olcPPolicyHashCleartext</code>. Создадим LDIF-файл <code>/tmp/ldifs/104-ppolicy_modify_overlay.ldif</code> такого содержания:</p>
 <pre class="list">
-<code>dn: olcOverlay={0}ppolicy,olcDatabase={1}bdb,cn=config</code>
+<code>dn: olcOverlay={0}ppolicy,olcDatabase={1}mdb,cn=config</code>
 <code>changetype: modify</code>
 <code>add: olcPPolicyHashCleartext</code>
 <code>olcPPolicyHashCleartext: TRUE</code>
@@ -96,12 +96,12 @@ olcPPolicyDefault: cn=PPolicy Default,ou=System,dc=mycompany,dc=ru
 <p>Применим наше изменение:</p>
 <pre class="sh"># ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/104-ppolicy_modify_overlay.ldif 
 Enter LDAP Password: 
-modifying entry "olcOverlay={0}ppolicy,olcDatabase={1}bdb,cn=config"
+modifying entry "olcOverlay={0}ppolicy,olcDatabase={1}mdb,cn=config"
 </pre>
 <p>Посмотрим, что получилось:</p>
-<pre class="sh"># ldapsearch -x -LLL -D 'cn=config' -W -b 'olcDatabase={1}bdb,cn=config' '(olcOverlay=*)'
+<pre class="sh"># ldapsearch -x -LLL -D 'cn=config' -W -b 'olcDatabase={1}mdb,cn=config' '(olcOverlay=*)'
 Enter LDAP Password: 
-dn: olcOverlay={0}ppolicy,olcDatabase={1}bdb,cn=config
+dn: olcOverlay={0}ppolicy,olcDatabase={1}mdb,cn=config
 objectClass: olcPPolicyConfig
 olcOverlay: {0}ppolicy
 olcPPolicyDefault: cn=PPolicy Default,ou=System,dc=mycompany,dc=ru
@@ -110,5 +110,5 @@ olcPPolicyHashCleartext: TRUE
 <p>Таким образом, мы прошли полный цикл добавления наложения: от добавления модуля и набора схемы данных до определения и модификации записи наложения, попутно расширив необходимыми записями пользовательское DIT.</p>
 <p>В итоге у нас есть вполне работоспособный каталог. <a href="more.html">Чем заняться дальше?</a></p>
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Добавление наложения</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;12 января 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2017 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;4 декабря 2017 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>
