@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.4 Добавление и инициализация пользовательской базы данных</title>
+<script src="/pro-ldap.js"></script>
+<script src="../book.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Добавление и инициализация пользовательской базы данных</p>
+<h1>3.4 Добавление и инициализация пользовательской базы данных</h1>
+<div class="note">Примеры адаптированы для <select id="favOSSelect" onchange="changeFavOS(this.value)"><option value="ubuntu">Ubuntu Linux</option><option value="gentoo">Gentoo Linux</option></select></div>
+<p>Пришло время заставить нашу службу каталогов быть не только вещью в себе, но и приносить какую-то реальную пользу. Самый простой и распространённый вариант использования службы каталогов&thinsp;&mdash;&thinsp;поддержка пользовательской базы данных или DIT. На этом этапе мы как раз и создадим такую базу данных с контекстом именования (суффиксом) <code>dc=mycompany,dc=ru</code>, отражающим доменное имя некой виртуальной компании.</p>
+<p>Первым делом нам нужно создать LDIF-файл с описанием настроек базы данных, который мы будем добавлять в <code>cn=config</code>. Создадим файл <code>/tmp/ldifs/003-create_user_db.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: olcDatabase=bdb,cn=config</code>
+<code>objectClass: olcBdbConfig</code>
+<code>olcDatabase: bdb</code>
+<code>olcSuffix: dc=mycompany,dc=ru</code>
+<code>olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru</code>
+<code>olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru</code>
+<code>olcRootPW: secret2</code>
+</pre>
+<p>Запись настроек базы данных механизма манипуляции данными bdb строится на структурном объектном классе <code>olcBdbConfig</code>, являющимся потомком объектного класса <code>olcDatabaseConfig</code>; таким образом, у него всего два обязательных атрибута: <code>olcDatabase</code> (образующий RDN) и <code>olcDbDirectory</code>, в котором указывается директория файловой системы, где будут размещаться файлы базы данных bdb. Хотя атрибут <code>olcSuffix</code> и не является обязательным, без него добавить базу данных не получится (ошибка 80), да и нет смысла не указывать суффикс.</p>
+
+<p class="note">Обратите внимание, что мы назвали директорию базы данных по имени суффикса нашего пользовательского DIT и поместили её внутрь той директории, которая по умолчанию для данного дистрибутива предназначена для хранения файлов базы данных. Естественно, назвать директорию можно было как угодно и разместить где угодно. Наше решение продиктовано тем, что служба каталогов может обслуживать несколько DIT, поэтому занимать директорию <span><code class="ubuntu">/var/lib/ldap</code><code class="gentoo" style="display:none">/var/lib/openldap-data</code></span> целиком под файлы одной базы данных нерентабельно, и, кроме того, такая система именования удобна и позволяет избежать путаницы.</p>
+
+<p>Чтобы можно было подключиться к нашей базе данных, необходимы учётные данные, поэтому указаны также атрибуты <code>olcRootDN</code> и <code>olcRootPW</code>. Мы выбрали в качестве rootDN традиционное для LDAP-каталогов RDN <code>cn=manager</code>. Это, конечно, не догма, имя может быть любым, основное требование&thinsp;&mdash;&thinsp;DN должен находиться в пределах контекста именования <code>dc=myconpany,dc=ru</code>. Пример:</p>
+<pre class="list">
+<code>olcRootDN: cn=admin,dc=mycompany,dc=ru</code>
+</pre>
+<p>Пароль в примере задан в открытом виде (secret2). Конечно, это не лучшее решение для любых парольных атрибутов, а тем более для <code>olcRootPW</code>. Заменим его более безопасным хэшированным значением пароля. Сначала сгенерируем его с помощью инструмента <code>slappasswd</code>:</p>
+<pre class="sh">
+# slappasswd -h '{SSHA}' -s 'secret2'
+{SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+</pre>
+<p>Первым аргументом команды мы указали алгоритм хэширования (в данном случае это SHA с "солью"), вторым&thinsp;&mdash;&thinspтот пароль, хэш которого нам требуется получить. Если Вы не хотите оставлять пароль в открытом виде в истории команд, то нужно не указывать аргумент <code>-s</code>, тогда <code>slappasswd</code> дважды попросит у Вас ввести пароль:</p>
+<pre class="sh">
+# slappasswd -h '{SSHA}' 
+New password: 
+Re-enter new password:
+{SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+</pre>
+<p>Вывод команды&thinsp;&mdash;&thinsp;наш хэшированный пароль. Его нужно <a href="../../cookbook/slappasswd/insert-to-ldif.html">тем или иным образом поместить в наш LDIF-файл</a>. Атрибут <code>olcRootPW</code> будет выглядеть так:</p>
+<pre class="list">
+<code>olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g</code>
+</pre>
+<p>Наш LDIF-файл с минимальными настройками готов к загрузке. Можно сразу продумать и дописать в него атрибуты с дополнительными настройками, можно будет сделать это потом. В качестве иллюстрации добавим атрибут <code>olcDbIndex</code> с индексированием атрибута <code>objectClass</code>:</p>
+<pre class="list">
+<code>olcDbIndex: objectClass eq</code>
+</pre>
+<p>Наш итоговый LDIF-файл будет выглядеть так:</p>
+<pre class="list">
+<code>dn: olcDatabase=bdb,cn=config</code>
+<code>objectClass: olcBdbConfig</code>
+<code>olcDatabase: bdb</code>
+<code>olcSuffix: dc=mycompany,dc=ru</code>
+<code>olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru</code>
+<code>olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru</code>
+<code>olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g</code>
+<code>olcDbIndex: objectClass eq</code>
+</pre>
+
+<p>Перед тем, как его загрузить, нужно создать директорию, которую мы указали в атрибуте <code>olcDbDirectory</code>, поместить в нее файл настроек базы данных bdb DB_CONFIG и назначить этой директории и файлу в качестве владельцев того пользователя и группу, от имени которых запущен <code>slapd</code>:</p>
+
+<pre class="sh">
+# mkdir <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
+# cp <span><span class="ubuntu">/usr/share/slapd/DB_CONFIG</span><span class="gentoo" style="display:none">/var/lib/openldap-data/DB_CONFIG.example</span></span> <span><span class="ubuntu">/var/lib/ldap/dc=mycompany,dc=ru</span><span class="gentoo" style="display:none">/var/lib/openldap-data/dc=mycompany,dc=ru/DB_CONFIG</span></span>
+# chown -R <span><span class="ubuntu">openldap:openldap</span><span class="gentoo" style="display:none">ldap:ldap</span></span> <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
+</pre>
+<p>Загружаем LDIF-файл c описанием базы данных:</p>
+<pre class="sh">
+ldapadd -x -D 'cn=config' -W -f /tmp/ldifs/003-create_user_db.ldif
+Enter LDAP Password: 
+adding new entry "olcDatabase=bdb,cn=config"
+</pre>
+<p class="note">Если в ответ на команду <code>ldapadd</code> сервер выдаёт ошибку "ldap_add: Invalid syntax (21) additional info: objectClass: value #0 invalid per syntax", Вы, вероятно, не добавили динамический модуль back_bdb. О том, как добавлять модули, смотрите <a href="module.html">здесь</a>.</p>
+
+<p>Итак, мы добавили пользовательскую базу данных, при этом в директории, указанной в атрибуте <code>olcDbDirectory</code> появились файлы базы данных bdb:</p>
+<pre class="sh">
+# ls -l <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru/
+итого 2888
+-rw-r--r-- 1 openldap openldap     2048 2012-10-28 00:26 alock
+-rw------- 1 openldap openldap    24576 2012-10-28 00:26 __db.001
+-rw------- 1 openldap openldap   630784 2012-10-28 00:26 __db.002
+-rw------- 1 openldap openldap  2629632 2012-10-28 00:26 __db.003
+-rw------- 1 openldap openldap   589824 2012-10-28 00:26 __db.004
+-rw------- 1 openldap openldap  2703360 2012-10-28 00:26 __db.005
+-rw------- 1 openldap openldap    32768 2012-10-28 00:26 __db.006
+-rw-r--r-- 1 openldap openldap     3080 2012-09-17 11:10 DB_CONFIG
+-rw------- 1 openldap openldap     8192 2012-10-28 00:26 dn2id.bdb
+-rw------- 1 openldap openldap    32768 2012-10-28 00:26 id2entry.bdb
+-rw------- 1 openldap openldap 10485760 2012-10-28 00:26 log.0000000001
+</pre>
+
+<p>Попробуем сделать к ней запрос:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -b 'dc=mycompany,dc=ru'
+No such object (32)
+</pre>
+<p>Ошибка! Но всё закономерно: добавить-то мы базу данных добавили, но не проинициализировали. Чтобы это сделать, создадим LDIF-файл <code>/tmp/ldifs/004-init_user_db.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: dc=mycompany,dc=ru</code>
+<code>objectClass: organization</code>
+<code>objectClass: dcObject</code>
+<code>dc: mycompany</code>
+<code>o: My Company</code>
+</pre>
+<p>Здесь описана корневая запись DIT <code>dc=mycompany,dc=ru</code>. В качестве структурного объектного класса используется класс <code>organization</code> (обязательный атрибут <code>o</code>). Вспомогательный объектный класс <code>dcObject</code> требуется нам для атрибута <code>dc</code>, образующего RDN.</p>
+<p>Добавим нашу запись командой <code>ldapadd</code>:</p>
+<pre class="sh">
+# ldapadd -x -D 'cn=manager,ou=System,dc=mycompany,dc=ru' -W -f /tmp/ldifs/004-init_user_db.ldif
+Enter LDAP Password: 
+adding new entry "dc=mycompany,dc=ru"
+</pre>
+<p>Обратите внимание, что в качестве учётной записи, под которой происходит подсоединение к каталогу, используется rootDN нашей пользовательской базы данных и, соответственно, на запрос пароля нужно вводить пароль, указанный в атрибуте <code>olcRootPW</code> той же базы данных.</p>
+<p>Попробуем сделать запрос ещё раз:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -b 'dc=mycompany,dc=ru'
+dn: dc=mycompany,dc=ru
+objectClass: organization
+objectClass: dcObject
+dc: mycompany
+o: My Company
+</pre>
+<p>Теперь всё в порядке, можно приступать к наполнению каталога. Для добавления записей-разделов, таких как <code>ou=Users,dc=mycompany,dc=ru</code>, достаточно атрибутов и объектных классов из подключенного нами ранее набора схемы данных core. Однако для более изощрённых записей нам понадобится <a href="schema.html">подключить другие наборы схемы</a>.</p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Добавление и инициализация пользовательской базы данных</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;28 февраля 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

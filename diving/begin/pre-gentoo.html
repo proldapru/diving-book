@@ -1,0 +1,68 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.1.2 Перед тем как начать&thinsp;&mdash;&thinsp;Gentoo Linux</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Перед тем как начать&thinsp;&mdash;&thinsp;Gentoo Linux</p>
+<h1>3.1.2 Перед тем как начать&thinsp;&mdash;&thinsp;Gentoo Linux</h1>
+<p>После установки OpenLDAP в gentoo по умолчанию для его настройки предлагается использовать файл <code>/etc/openldap/slapd.conf</code>, пример которого, взятый из дистрибутива, уже находится в директории <code>/etc/openldap</code>. К слову, там же находится и LDIF-файл slapd.ldif, с помощью которого, при некоторых навыках, можно поднять аналогичную конфигурацию <code>cn=config</code>.</p>
+<p><code>slapd</code>, как и любой другой демон в gentoo, после установки самостоятельно не запускается, при необходимости его следует запустить вручную скриптом <code>/etc/init.d/slapd</code>.</p>
+<p>Поскольку мы будем использовать конфигурацию <code>cn=config</code> и собираемся инициализировать её самостоятельно, всё, что нам потребуется на этапе подготовки&thinsp;&mdash;&thinsp;указать нужные параметры запуска для скрипта <code>/etc/init.d/slapd</code> в файле <code>/etc/conf.d/slapd</code>. В этом файле задаётся ряд переменных окружения, которые будут использоваться в стартовом скрипте для формирования строки вызова <code>slapd</code> и других целей. Примерное содержимое файла (на текущий момент для версий 2.4.28 и выше):</p>
+<pre class="list">
+<code># conf.d file for openldap</code>
+<code>#</code>
+<code># To enable both the standard unciphered server and the ssl encrypted</code>
+<code># one uncomment this line or set any other server starting options</code>
+<code># you may desire.</code>
+<code></code>
+<code># If you have multiple slapd instances per #376699, this will provide a default config</code>
+<code>INSTANCE="openldap${SVCNAME#slapd}"</code>
+<code></code>
+<code># If you use the classical configuration file:</code>
+<code>OPTS_CONF="-f /etc/${INSTANCE}/slapd.conf"</code>
+<code># Uncomment this instead to use the new slapd.d configuration directory for openldap 2.3</code>
+<code>#OPTS_CONF="-F /etc/${INSTANCE}/slapd.d"</code>
+<code># (the OPTS_CONF variable is also passed to slaptest during startup)</code>
+<code></code>
+<code>OPTS="${OPTS_CONF} -h 'ldaps:// ldap:// ldapi://%2fvar%2frun%2fopenldap%2fslapd.sock'"</code>
+<code># Optional connectionless LDAP:</code>
+<code>#OPTS="${OPTS_CONF} -h 'ldaps:// ldap:// ldapi://%2fvar%2frun%2fopenldap%2fslapd.sock cldap://'"</code>
+<code></code>
+<code># If you change the above listen statement to bind on a specific IP for</code>
+<code># listening, you should ensure that interface is up here (change eth0 as</code>
+<code># needed).</code>
+<code>#rc_need="net.eth0"</code>
+<code></code>
+<code># Specify the kerberos keytab file</code>
+<code>#KRB5_KTNAME=/etc/openldap/krb5-ldap.keytab</code>
+</pre>
+<p>Нас интересуют две основные переменные&thinsp;&mdash;&thinsp;<code>OPTS_CONF</code>, задающая путь к файлу или директории конфигурации, и <code>OPTS</code>, включающая в себя первую и определяющая другие опции командной строки <code>slapd</code>, в частности, <code>-h</code> (на каких интерфейсах и портах <code>slapd</code> будет ожидать подключения). В нашем случае мы зададим их так:</p>
+<pre class="list">
+<code>OPTS_CONF="-F /etc/${INSTANCE}/slapd.d</code>
+<code>OPTS="${OPTS_CONF} -h 'ldap://'</code>
+</pre>
+<p>То есть мы будем осуществлять настройку посредством каталога <code>cn=config</code>, путь к физической директории которого будет <code>/etc/openldap/slapd.d</code>, и, на этапе настройки будем подключаться к <code>slapd</code> на любой сетевой интерфейс сервера на стандартный порт 389 (без TLS). Итоговый файл <code>/etc/conf.d/slapd</code> (без лишних комментариев) будет выглядеть так:</p>
+<pre class="list">
+<code>INSTANCE="openldap${SVCNAME#slapd}"</code>
+<code></code>
+<code>#OPTS_CONF="-f /etc/${INSTANCE}/slapd.conf"</code>
+<code>OPTS_CONF="-F /etc/${INSTANCE}/slapd.d"</code>
+<code></code>
+<code>OPTS="${OPTS_CONF} -h 'ldap://'</code>
+<code>#OPTS="${OPTS_CONF} -h 'ldaps:// ldap:// ldapi://%2fvar%2frun%2fopenldap%2fslapd.sock'"</code>
+<code>#OPTS="${OPTS_CONF} -h 'ldaps:// ldap:// ldapi://%2fvar%2frun%2fopenldap%2fslapd.sock cldap://'"</code>
+<code></code>
+<code>#rc_need="net.eth0"</code>
+<code></code>
+<code>#KRB5_KTNAME=/etc/openldap/krb5-ldap.keytab</code>
+</pre>
+<p>Всё, можно приступать к <a href="init.html">инициализации каталога cn=config</a></p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Перед тем как начать&thinsp;&mdash;&thinsp;Gentoo Linux</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;12 января 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

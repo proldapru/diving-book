@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.2 Инициализация каталога</title>
+<script src="/pro-ldap.js"></script>
+<script src="../book.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Инициализация каталога cn=config</p>
+<h1>3.2 Инициализация каталога cn=config</h1>
+<div class="note">Примеры адаптированы для <select id="favOSSelect" onchange="changeFavOS(this.value)"><option value="ubuntu">Ubuntu Linux</option><option value="gentoo">Gentoo Linux</option></select></div>
+<p>Итак, мы готовы приступить к инициализации системы конфигурации времени исполнения <code>cn=config</code>.</p>
+<p>Для хранения записей каталога <code>cn=config</code> и работы с ними <code>slapd</code> использует механизм манипуляции данными back-ldif, который хранит записи в текстовых файлах в формате LDIF и использует файловую систему для создания древовидной структуры базы данных. Первым делом необходимо создать корневую директорию базы <code>cn=config</code>, где будут размещаться поддиректории и конечные LDIF-файлы этого DIT. Именно путь к этой директории передаётся в аргументе <code>-F</code> при запуске <code>slapd</code>, поэтому она может, по сути, находиться где угодно и называться как угодно. Тем не менее, существует общепринятая практика размещать её в директории <span><code class="ubuntu">/etc/ldap</code><code class="gentoo" style="display:none">/etc/openldap</code></span> и называть <code>slapd.d</code> (этот путь <code>slapd</code> пытается использовать по умолчанию, если аргумент <code>-F</code> не задан). Проверьте, возможно такая директория уже создана, если нет, создадим её:</p>
+<pre class="sh">
+<span class="ubuntu"># mkdir /etc/ldap/slapd.d</span><span class="gentoo" style="display:none"># mkdir /etc/openldap/slapd.d</span>
+</pre>
+<p>Теперь нужно наполнить нашу корневую директорию содержимым. По сути, необходимо создать LDIF-файл, описывающий DIT <code>cn=config</code> в минимально необходимом объёме, и создать на его основе базу данных с помощью инструмента <code>slapadd</code>. Под минимально необходимым подразумевается такой объём, чтобы с помощью этого LDIF-файла можно было инициализировать каталог и запустить на его основе <code>slapd</code>, а затем подключиться к нему и осуществлять дальнейшую работу с помощью стандартных LDAP-запросов. LDIF-файл, отвечающий данным требованиям, выглядит так:</p>
+<pre class="list">
+<code>dn: cn=config</code>
+<code>objectClass: olcGlobal</code>
+<code>cn: config</code>
+<code></code>
+<code>dn: olcDatabase={0}config,cn=config</code>
+<code>objectClass: olcDatabaseConfig</code>
+<code>olcDatabase: {0}config</code>
+<code>olcRootPW: secret</code>
+</pre>
+<p>В этом LDIF описываются две записи. Первая из них&thinsp;&mdash;&thinsp;корневая запись DIT <code>cn=config</code>, в которую в дальнейшем, в виде атрибутов объектного класса <code>olcGlobal</code>, будут добавляться практически все глобальные настройки нашей службы каталогов. Кроме того, она, как корневая запись, будет являться родительской записью для других системных записей <code>cn=config</code>, а также для записей служебных и пользовательских баз данных.</p>
+<p>Вторая запись данного LDIF описывает одну из служебных баз данных, а именно собственно нашу базу данных конфигурации cn=config. Конечно, и её можно было бы не указывать, тогда slapadd при добавлении LDIF создал бы её автоматически. Но ведь нам требуется затем подключаться к <code>cn=config</code> для работы (иначе зачем вообще огород городить), а для этого нужны учётные данные. Подключиться к <code>cn=config</code> можно только от имени rootDN с паролем, которые определяется, соответственно, в атрибутах <code>olcRootDN</code> и <code>olcRootPW</code> объектного класса <code>olcDatabaseConfig</code>, на котором строятся записи конфигурации всех баз данных, в том числе и <code>cn=config</code>. Атрибут <code>olcRootDN</code> мы не указали, его значением по умолчанию для базы данных <code>cn=config</code> будет само cn=config. Если это Вас смущает или пугает, можете задать явно другой rootDN:</p>
+<pre class="list">
+<code>olcRootDN: cn=manager,cn=config</code>
+</pre>
+или
+<pre class="list">
+<code>olcRootDN: cn=admin,cn=config</code>
+</pre>
+<p>Имя может быть любым, но обязательное требование&thinsp;&mdash;&thinsp;чтобы оно находилось в пределах контекста именования <code>cn=config</code>, иначе <code>slapd</code> не даст Вам подключиться к этой базе данных. В дальнейших примерах мы будем использовать rootDN по умолчанию&thinsp;&mdash;&thinsp;cn=config.</p>
+<p>Что касается пароля, то его необходимо задавать явно. В приведённом выше примере пароль указан в открытом виде. Конечно, это не лучшее решение для любых парольных атрибутов, а тем более для <code>olcRootPW</code>. Заменим его более безопасным хэшированым значением пароля. Сначала сгенерируем его с помощью инструмента <code>slappasswd</code>:</p>
+<pre class="sh">
+# slappasswd -h '{SSHA}' -s 'secret'
+{SSHA}nBszmKAlK0bWe3uP4oOIz86FgNMod4xv
+</pre>
+<p>Первым аргументом команды мы указали алгоритм хэширования (в данном случае это SHA с "солью"), вторым&thinsp;&mdash;&thinsp;тот пароль, хэш которого нам требуется получить. Если Вы не хотите оставлять пароль в открытом виде в истории команд, то нужно не указывать аргумент <code>-s</code>, тогда <code>slappasswd</code> дважды попросит Вас ввести пароль:</p>
+<pre class="sh">
+# slappasswd -h '{SSHA}' 
+New password: 
+Re-enter new password:
+{SSHA}nBszmKAlK0bWe3uP4oOIz86FgNMod4xv
+</pre>
+<p>Вывод команды&thinsp;&mdash;&thinsp;наш хэшированный пароль. Его нужно <a href="../../cookbook/slappasswd/insert-to-ldif.html">тем или иным образом поместить в наш LDIF-файл</a>. Атрибут <code>olcRootPW</code> будет выглядеть так:</p>
+<pre class="list">
+<code>olcRootPW: {SSHA}nBszmKAlK0bWe3uP4oOIz86FgNMod4xv</code>
+</pre>
+<p>Наш LDIF-файл готов к загрузке. Если его загрузить в таком виде, то к двум нашим записям <code>slapadd</code> добавит описание ещё одной служебной базы данных frontend и системную запись <code>cn=schema</code>. Причём в описание frontend будут добавлены olc-атрибуты, которые <code>slapd</code> установленной версии решит выставить по умолчанию, а <code>cn=schema</code> будет содержать какой-то не слишком очевидный набор схемы данных, представляющий собой смесь системной схемы и части пользовательского набора схемы core (например, там будет описание атрибута <code>cn</code>, который нужен повсеместно в <code>cn=config</code>, но не будет описания атрибута <code>dc</code>, который понадобится нам при инициализации пользовательской базы данных). Поэтому базу данных frontend мы оставим в покое, а запись <code>cn=schema</code> зададим явно и добавим к ней в качестве дочерней записи описание пользовательского набора схемы данных core:</p>
+<pre class="list">
+<code>dn: cn=schema,cn=config</code>
+<code>objectClass: olcSchemaConfig</code>
+<code>cn: schema</code>
+<code></code>
+<code>include: file://<span><span class="ubuntu">/etc/ldap/schema/core.ldif</span><span class="gentoo" style="display:none">/etc/openldap/schema/core.ldif</span></span></code>
+</pre>
+<p>Ещё один маленький ньюанс&thinsp;&mdash;&thinsp;многие системы (в том числе Ubuntu) для корректной работы стартовых скриптов <code>slapd</code> требуют наличия pid-файла и потому ожидают, что в записи <code>cn=config</code> будет задан атрибут <code>olcPidFile</code>. Зададим его и мы (в конце концов, это неплохая практика):</p>
+<pre class="list">
+<code>olcPidFile: /var/run/slapd/slapd.pid</code>
+</pre>
+<p>Теперь всё готово к тому, чтобы проинициализировать конфигурацию <code>cn=config</code> и благополучно запустить <code>slapd</code>. Наш итоговый LDIF-файл будет выглядеть так:</p>
+<pre class="list">
+<code>dn: cn=config</code>
+<code>objectClass: olcGlobal</code>
+<code>cn: config</code>
+<code>olcPidFile: /var/run/<span><span class="ubuntu">slapd</span><span class="gentoo" style="display:none">openldap</span></span>/slapd.pid</code>
+<code></code>
+<code>dn: olcDatabase={0}config,cn=config</code>
+<code>objectClass: olcDatabaseConfig</code>
+<code>olcDatabase: {0}config</code>
+<code>olcRootPW: {SSHA}nBszmKAlK0bWe3uP4oOIz86FgNMod4xv</code>
+<code></code>
+<code>dn: cn=schema,cn=config</code>
+<code>objectClass: olcSchemaConfig</code>
+<code>cn: schema</code>
+<code></code>
+<code>include: file://<span><span class="ubuntu">/etc/openldap/schema/core.ldif</span><span class="gentoo" style="display:none">/etc/openldap/schema/core.ldif</span></span></code>
+</pre>
+<p>Сохраним его как <code>/tmp/ldifs/001-init_cn_config.ldif</code>. Проинициализируем конфигурацию <code>cn=config</code>:</p>
+<pre class="sh">
+<span class="ubuntu"># slapadd -n 0 -F /etc/ldap/slapd.d -l /tmp/ldifs/001-init_cn_config.ldif</span><span class="gentoo" style="display:none"># slapadd -n 0 -F /etc/openldap/slapd.d -l /tmp/ldifs/001-init_cn_config.ldif</span>
+_#################### 100.00% eta   none elapsed            none fast!         
+Closing DB...
+</pre>
+<p>Параметр <code>-n 0</code> говорит о том, что мы добавляем данные в базу данных с индексом 0, который зарезервирован для <code>cn=config</code>. Если его не указать, <code>slapadd</code> по умолчанию будет пытаться добавить данные в первую базу данных с индексом больше нуля (обычно это первая по списку пользовательская база данных).</p>
+<p>Посмотрим, что у нас получилось:</p>
+<pre class="sh">
+<span class="ubuntu"># ls -lR /etc/ldap/slapd.d
+/etc/ldap/slapd.d:
+итого 8
+drwxr-x--- 3 root root 4096 2012-10-14 10:34 cn=config
+-rw------- 1 root root  332 2012-10-14 10:34 cn=config.ldif
+
+/etc/ldap/slapd.d/cn=config:
+итого 16
+drwxr-x--- 2 root root 4096 2012-10-14 10:34 cn=schema
+-rw------- 1 root root  307 2012-10-14 10:34 cn=schema.ldif
+-rw------- 1 root root  400 2012-10-14 10:34 olcDatabase={0}config.ldif
+-rw------- 1 root root  525 2012-10-14 10:34 olcDatabase={-1}frontend.ldif
+
+/etc/ldap/slapd.d/cn=config/cn=schema:
+итого 16
+-rw------- 1 root root 15456 2012-10-14 10:34 cn={0}core.ldif</span><span class="gentoo" style="display:none"># ls -lR /etc/openldap/slapd.d
+/etc/openldap/slapd.d:
+итого 8
+drwxr-x--- 3 root root 4096 2012-10-14 10:34 cn=config
+-rw------- 1 root root  332 2012-10-14 10:34 cn=config.ldif
+
+/etc/openldap/slapd.d/cn=config:
+итого 16
+drwxr-x--- 2 root root 4096 2012-10-14 10:34 cn=schema
+-rw------- 1 root root  307 2012-10-14 10:34 cn=schema.ldif
+-rw------- 1 root root  400 2012-10-14 10:34 olcDatabase={0}config.ldif
+-rw------- 1 root root  525 2012-10-14 10:34 olcDatabase={-1}frontend.ldif
+
+/etc/openldap/slapd.d/cn=config/cn=schema:
+итого 16
+-rw------- 1 root root 15456 2012-10-14 10:34 cn={0}core.ldif</span>
+</pre>
+
+<p>Все добавляемые нами записи на месте. Но, поскольку <code>slapadd</code> мы выполняли с правами <code>root</code>, все файлы и поддиректории в <code>slapd.d</code> принадлежат пользователю root и группе root.  <code>slapd</code> же запускается от имени пользователя с ограниченными правами <span><span class="ubuntu"><code>openldap</code> и группы <code>openldap</code></span><span class="gentoo" style="display:none"><code>ldap</code> и группы <code>ldap</code></span></span>. Чтобы при запуске <code>slapd</code> мог получить доступ к файлам в конфигурационной директории, необходимо скорректировать принадлежность её содержимого:</p>
+<pre class="sh">
+<span class="ubuntu"># chown -R openldap:openldap /etc/ldap/slapd.d</span><span class="gentoo" style="display:none"># chown -R ldap:ldap /etc/openldap/slapd.d</span>
+</pre>
+
+<p>Остаётся только ограничить доступ к самой директории <code>slapd.d</code>, чтобы доступ к её содержимому был только у пользователя, от имени которого запускается <code>slapd</code>:</p>
+<pre class="sh">
+<span class="ubuntu"># chmod 750 /etc/ldap/slapd.d</span><span class="gentoo" style="display:none"># chmod 750 /etc/openldap/slapd.d</span>
+</pre>
+
+<p>Пора запускать наш <code>slapd</code>:</p>
+<pre class="sh">
+<span class="ubuntu"># service slapd start
+Starting OpenLDAP: slapd.</span><span class="gentoo" style="display:none"># /etc/init.d/slapd start</span>
+</pre>
+
+<p>Если случилось страшное, и <code>slapd</code> не запустился&thinsp;&mdash;&thinsp;не отчаивайтесь!
+<ul>
+<li>Проверьте, нет ли ошибок в LDIF-файле.</li>
+<li>Проверьте, что все предыдущие выполненные Вами команды успешно завершились (особенно <code>slapadd</code>).</li>
+<li>Просмотрите вывод скрипта запуска <code>slapd</code>&thinsp;&mdash;&thinsp;возможно, он натолкнёт Вас на правильное решение.</li>
+<li>Запустите <code>slapd</code> в режиме диагностики (все ошибки выводятся в терминал) и изучайте вывод:</li>
+</ul>
+</p>
+<pre class="sh">
+<span class="ubuntu"># slapd -d -1 -u openldap -g openldap</span><span class="gentoo" style="display:none"># slapd -d -1 -u ldap -g ldap</span>
+</pre>
+
+<p>Итак, slapd запущен. Дальнейшие настройки, по сути, заключаются в добавлении новых и редактировании имеющихся записей DIT <code>cn=config</code>. Мы будем производить эти действия, выполняя стандартные операции LDAP с помощью инструментов OpenLDAP, таких как <code>ldapadd</code> или <code>ldapmodify</code>, подключаясь к <code>cn=config</code> от имени rootDN (cn=config) с паролем, который мы определили в атрибуте <code>olcRootPW</code> (secret). Эти действия можно выполнять как с той же самой машины, так и с любой другой машины в сети, передавая утилите данные о сервере с помощью аргумента <code>-H</code>, параметром которого является LDAP URL, либо сочетанием аргументов <code>-h</code> и <code>-p</code>, указывая в них адрес хоста сервера и порт, который он обслуживает соответственно. Если Вы предпочитаете <code>ldapvi</code> или графические LDAP-клиенты&thinsp;&mdash;&thinsp;прекрасно! Просто адаптируйте наши примеры под свой клиент.</p>
+<p>База данных <code>cn=config</code> проинициализирована. Приступим к настройке OpenLDAP. Сначала <a href="module.html">добавим необходимые модули</a>.</p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Инициализация каталога cn=config</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2014 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;04 апреля 2014 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

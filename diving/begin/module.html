@@ -1,0 +1,77 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.3 Работа с модулями</title>
+<script src="/pro-ldap.js"></script>
+<script src="../book.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Работа с модулями</p>
+<h1>3.3 Работа с модулями</h1>
+<div class="note">Примеры адаптированы для <select id="favOSSelect" onchange="changeFavOS(this.value)"><option value="ubuntu">Ubuntu Linux</option><option value="gentoo">Gentoo Linux</option></select></div>
+<p>Если Вы не собирали OpenLDAP из исходников под свою задачу, вкомпилировав всё необходимое в <code>slapd</code>, то рано или поздно Вы столкнётесь с необходимостью добавить тот или иной динамический модуль. В Ubuntu, например, даже back_bdb и back_hdb собраны модулями. Единственный способ достоверно определить, собран ли модуль статически или динамически (или вообще не был собран)&thinsp;&mdash;&thinsp;посмотреть, с какими опциями запускался скрипт <code>configure</code> при сборке <code>slapd</code>. Однако, при установке из двоичного пакета такая информация доступна не всегда. Тем не менее, наличие нужного Вам модуля в директории с модулями <code>slapd</code> (<span><code class="ubuntu">/usr/lib/ldap</code><code class="gentoo" style="display:none">/usr/lib/openldap/openldap</code></span>) наверняка говорит о том, что данный модуль собран динамически и требует подключения способом, <a href="#dynamic-modules">описанным ниже</a>. Если же нужного Вам модуля там нет, остаётся лишь надеяться, что он был собран статически и подключения не требует, можно попробовать сразу задействовать функционал, реализуемый этим модулем. Наконец, если модуля нет и при попытке задействовать функционал этого модуля выдаётся ошибка, скорее всего при сборке <code>slapd</code> этот модуль вообще не собирался. В таком случае придётся отказаться от использования двоичного установочного пакета и собирать OpenLDAP из исходников, предусмотрев всё необходимое на этапе сборки.</span></p>
+<p>Далее пойдёт речь о подключении динамических модулей.</p>
+<h2><a name="dynamic-modules"></a>Подключение динамических модулей</h2>
+<p>В cn=config для определения модулей служит специальная запись <code>cn=module{0},cn=config</code>. Она строится на структурном объектном классе <code>olcModuleList</code>, в определении которого присутствует всего 3 атрибута (да и то необязательных): <code>cn</code>, <code>olcModulePath</code> и <code>olcModuleLoad</code>. Но и их вполне хватит для загрузки динамических модулей.</p>
+<p>Те модули, которые требуется загрузить, указываются в атрибутах <code>olcModuleLoad</code>. Значением этого атрибута может быть либо указание полного пути к файлу модуля, либо только название файла. Поскольку обычно после сборки OpenLDAP все динамические модули находятся в одной директории файловой системы, вполне резонно для сокращения значений атрибута <code>olcModuleLoad</code> указать путь к этой директории в атрибуте <code>olcModulePath</code>. Этот атрибут может иметь только одно значение (SINGLE-VALUE), поэтому, если Вам по какой-то причине нужно задать несколько путей, их указывают в одном значении атрибута, используя в качестве разделителя двоеточие. Подробнее об атрибутах <code>olcModulePath</code> и <code>olcModuleLoad</code> можно почитать в <a href="//pro-ldap.ru/tr/zytrax/ch6/#moduleload">учебнике LFRS</a>.</p>
+<p>Итак, мы собираемся создать базу данных механизма bdb и выяснили, что механизм bdb собран в виде динамического модуля. Для загрузки модуля создадим LDIF-файл <code>/tmp/ldifs/002-add_modules.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: cn=module,cn=config</code>
+<code>objectClass: olcModuleList</code>
+<code>cn: module</code>
+<code>olcModulePath: <span><span class="ubuntu">/usr/lib/ldap</span><span class="gentoo" style="display:none">/usr/lib/openldap/openldap</span></span></code>
+<code>olcModuleLoad: back_bdb.la</code>
+</pre>
+<p>Если нужно добавить сразу несколько модулей, просто добавьте атрибуты <code>olcModuleLoad</code> с именами нужных модулей в конец определения данной записи. Применим наш LDIF-файл с помощью команды <code>ldapadd</code>:</p>
+<pre class="sh">
+# ldapadd -x -D 'cn=config' -W -f /tmp/ldifs/002-add_modules.ldif
+Enter LDAP Password: 
+adding new entry "cn=module,cn=config"
+</pre>
+<p>OpenLDAP добавит к RDN данной записи индекс <code>{0}</code>, а также добавит соответствующие индексы к атрибутам <code>olcModuleLoad</code>. В итоге наша запись будет выглядеть так:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(objectClass=olcModuleList)'
+Enter LDAP Password: 
+
+dn: cn=module{0},cn=config
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: <span><span class="ubuntu">/usr/lib/ldap</span><span class="gentoo" style="display:none">/usr/lib/openldap/openldap</span></span>
+olcModuleLoad: {0}back_bdb.la
+</pre>
+<h2><a name="additional-modules"></a>Добавление других динамических модулей</h2>
+<p>Мы создали запись <code>cn=module{0},cn=config</code> и загрузили один (или несколько) модулей. Но что делать, если в процессе работы нам понадобилось загрузить еще один (или несколько) модулей? Нет ничего проще! Нужно лишь добавить их имена в виде атрибутов <code>olcModuleLoad</code> к нашей записи <code>cn=module{0},cn=config</code>.</p>
+<p>Проиллюстрируем добавление модуля на примере динамического модуля наложения ppolicy. Создадим LDIF-файл <code>/tmp/ldifs/101-ppolicy_add_module.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: ppolicy.la</code>
+</pre>
+<p>Применим его с помощью команды <code>ldapmodify</code>:</p>
+<pre class="sh">
+# ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/101-ppolicy_add_module.ldif
+Enter LDAP Password: 
+modifying entry "cn=module{0},cn=config"
+</pre>
+<p>Посмотрим, что у нас получилось:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(cn=module{0})'
+Enter LDAP Password: 
+
+dn: cn=module{0},cn=config
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: <span><span class="ubuntu">/usr/lib/ldap</span><span class="gentoo" style="display:none">/usr/lib/openldap/openldap</span></span>
+olcModuleLoad: {0}back_bdb.la
+olcModuleLoad: {1}ppolicy.la
+</pre>
+<p>Новое значение атрибута <code>olcModuleLoad</code> добавилось в конец списка значений и  получило индекс <code>{1}</code>, хотя в данном случае порядковый номер не имеет практического значения, поскольку порядок загрузки динамических модулей не важен.</p>
+<p>Что ж, модули мы загрузили, теперь можно создать пользовательскую <a href="db.html">базу данных</a>.</p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Работа с модулями</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;12 января 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

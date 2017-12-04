@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.7 Чем заняться дальше</title>
+<script src="/pro-ldap.js"></script>
+<script src="../book.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Чем заняться дальше</p>
+<h1>3.7 Чем заняться дальше</h1>
+<div class="note">Примеры адаптированы для <select id="favOSSelect" onchange="changeFavOS(this.value)"><option value="ubuntu">Ubuntu Linux</option><option value="gentoo">Gentoo Linux</option></select></div>
+<p>Дальнейшие действия целиком и полностью зависят от того, что было задумано на этапе проектирования каталога. Прежде всего это наполнение пользовательского DIT данными для реализации поставленной перед ним задачи, а также более тонкая настройка самой службы каталогов. Первым вопросом в рамках этой книги мы заниматься не будем, а различным аспектам настройки службы каталогов будут посвящены дальнейшие главы.</p>
+<p>На данном этапе хотелось бы отметить, что вся дальнейшая настройка службы каталогов OpenLDAP, по сути, заключается в манипулировании (добавлении, удалении, замене) атрибутами корневой записи <code>cn=config</code> (глобальные настройки каталога), добавлении новых модулей и наборов схемы данных (как это уже было описано ранее), манипулировании атрибутами записей баз данных и наложений (настройки на уровне DIT), а также добавлении по мере необходимости записей других баз данных и наложений. Освоив приёмы работы с записями каталога, Вы научитеcь довольно легко и быстро управлять своим каталогом.</p>
+<p>Приведём несколько базовых примеров работы с атрибутами, произведя настройки, которые администраторы выполняют чаще всего.</p>
+<h2><a name="global-attrs"></a>Настройка глобальных параметров службы каталогов</h2>
+Почти все глобальные параметры устанавливаются как атрибуты записи <code>cn=config</code>, построенной, как известно, на объектном классе <code>olcGlobal</code>. Посмотрим, что это за атрибуты:
+<pre class="sh">
+# ldapsearch -x  -LLL -b "cn=Subschema" -s base -o ldif-wrap=no '(objectClass=*)' objectClasses | grep olcGlobal
+objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.0.1 NAME 'olcGlobal' DESC 'OpenLDAP Global configuration options' SUP olcConfig STRUCTURAL MAY ( cn $ olcConfigFile $ olcConfigDir $ olcAllows $ olcArgsFile $ olcAttributeOptions $ olcAuthIDRewrite $ olcAuthzPolicy $ olcAuthzRegexp $ olcConcurrency $ olcConnMaxPending $ olcConnMaxPendingAuth $ olcDisallows $ olcGentleHUP $ olcIdleTimeout $ olcIndexSubstrIfMaxLen $ olcIndexSubstrIfMinLen $ olcIndexSubstrAnyLen $ olcIndexSubstrAnyStep $ olcIndexIntLen $ olcLocalSSF $ olcLogFile $ olcLogLevel $ olcPasswordCryptSaltFormat $ olcPasswordHash $ olcPidFile $ olcPluginLogFile $ olcReadOnly $ olcReferral $ olcReplogFile $ olcRequires $ olcRestrict $ olcReverseLookup $ olcRootDSE $ olcSaslAuxprops $ olcSaslHost $ olcSaslRealm $ olcSaslSecProps $ olcSecurity $ olcServerID $ olcSizeLimit $ olcSockbufMaxIncoming $ olcSockbufMaxIncomingAuth $ olcTCPBuffer $ olcThreads $ olcTimeLimit $ olcTLSCACertificateFile $ olcTLSCACertificatePath $ olcTLSCertificateFile $ olcTLSCertificateKeyFile $ olcTLSCipherSuite $ olcTLSCRLCheck $ olcTLSRandFile $ olcTLSVerifyClient $ olcTLSDHParamFile $ olcTLSCRLFile $ olcToolThreads $ olcWriteTimeout $ olcObjectIdentifier $ olcAttributeTypes $ olcObjectClasses $ olcDitContentRules $ olcLdapSyntaxes ) )
+</pre>
+<p>Как видим, атрибутов достаточно много, предназначение и формат многих из них можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#list">учебнике LFRS</a>. Мы же займёмся самым, пожалуй, полезным на этапе запуска и отладки параметром&thinsp;&mdash;&thinsp;установим уровень журналирования побольше, чтобы получить пищу для размышлений. Создадим LDIF-файл <code>/tmp/ldifs/10-add_loglevel.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcLogLevel</code>
+<code>olcLogLevel: any</code>
+</pre>
+<p>Применим наш LDIF-файл:</p>
+<pre class="sh">
+# ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/10-add_loglevel.ldif
+Enter LDAP Password: 
+modifying entry "cn=config"
+</pre>
+<p>Посмотрим, что получилось</p>
+<pre class="sh">
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(cn=config)'
+Enter LDAP Password: 
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcPidFile: /var/run/<span><span class="ubuntu">slapd</span><span class="gentoo" style="display:none">openldap</span></span>/slapd.pid
+olcLogLevel: any
+</pre>
+<p>Не забудьте, что на уровне <code>any</code> в лог-файлы будет помещаться очень много информации, что оправдано на этапе отладки, но неприемлемо при повседневной эксплуатации каталога. Поэтому, как только отладка завершена, не забудьте понизить уровень журналирования, например, с помощью такого LDIF:</p>
+<pre class="list">
+<code>dn: cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcLogLevel</code>
+<code>olcLogLevel: acl stats</code>
+</pre>
+<p>В данном случае мы устанавливаем слежение за обработкой ACL и вывод общей статистической информации. О том, какие существуют уровни журналирования и как их комбинировать, можно почитать в <a href="//pro-ldap.ru/tr/zytrax/ch6/#loglevel">учебнике LFRS</a>. Применяется данный LDIF, как всегда, командой <code>ldapmodify</code>:</p>
+<pre class="sh">
+# ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/11-replace_loglevel.ldif 
+Enter LDAP Password: 
+modifying entry "cn=config"
+</pre>
+<h2><a name="db-attrs"></a>Настройка параметров на уровне DIT</h2>
+<p>База данных использует определённый механизм манипуляции данными. Соответственно, запись базы данных в каталоге <code>cn=config</code> строится на специфичном для этого механизма манипуляции данными объектном классе, который является потомком общего объектного класса <code>olcDatabaseConfig</code>. Если, как в нашем случае, для базы данных используется механизм манипуляции данными <code>bdb</code>, то можно выяснить набор атрибутов для настройки этой базы данных такой командой:</p>
+<pre class="sh">
+# ldapsearch -x  -LLL -b "cn=Subschema" -s base -o ldif-wrap=no '(objectClass=*)' objectClasses | egrep "NAME 'olc(Bdb|Database)Config"
+objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.0.4 NAME 'olcDatabaseConfig' DESC 'OpenLDAP Database-specific options' SUP olcConfig STRUCTURAL MUST olcDatabase MAY ( olcHidden $ olcSuffix $ olcSubordinate $ olcAccess $ olcAddContentAcl $ olcLastMod $ olcLimits $ olcMaxDerefDepth $ olcPlugin $ olcReadOnly $ olcReplica $ olcReplicaArgsFile $ olcReplicaPidFile $ olcReplicationInterval $ olcReplogFile $ olcRequires $ olcRestrict $ olcRootDN $ olcRootPW $ olcSchemaDN $ olcSecurity $ olcSizeLimit $ olcSyncUseSubentry $ olcSyncrepl $ olcTimeLimit $ olcUpdateDN $ olcUpdateRef $ olcMirrorMode $ olcMonitoring $ olcExtraAttrs ) )
+objectClasses: ( 1.3.6.1.4.1.4203.1.12.2.4.2.1.1 NAME 'olcBdbConfig' DESC 'BDB backend configuration' SUP olcDatabaseConfig STRUCTURAL MUST olcDbDirectory MAY ( olcDbCacheSize $ olcDbCheckpoint $ olcDbConfig $ olcDbCryptFile $ olcDbCryptKey $ olcDbNoSync $ olcDbDirtyRead $ olcDbIDLcacheSize $ olcDbIndex $ olcDbLinearIndex $ olcDbLockDetect $ olcDbMode $ olcDbSearchStack $ olcDbShmKey $ olcDbCacheFree $ olcDbDNcacheSize $ olcDbPageSize ) )
+</pre>
+<p>Описание большинства общих для всех типов баз данных атрибутов можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#database">учебнике LFRS</a>, а описание специфичных для <code>bdb</code> атрибутов настроек вынесены в <a href="//pro-ldap.ru/tr/zytrax/ch6/bdb.html">отдельную страницу того же учебника</a>.</p>
+<p>Приведём примеры настроек, которые на данном этапе производит большинство администраторов каталога: установка списков контроля доступа (ACL) и индексирование атрибутов. Для примера ACL возьмём "классическое" ограничение доступа к парольному атрибуту <code>userPassword</code>: пользователь, прошедший аутентификацию от имени DN записи каталога (владелец записи), может менять свой пароль; анонимный пользователь может использовать парольный атрибут в целях аутентификации; остальным (кроме, разумеется, rootDN каталога) доступ к парольному атрибуту запрещён. Вторым правилом установим доступ ко всем остальным атрибутам всех записей каталога: у владельца записи есть право менять содержимое любого атрибута, у всех остальных&thinsp;&mdash;&thinsp;читать содержимое любого атрибута (кроме <code>userPassword</code>). LDIF, производящий соответствующие изменения в настройках базы данных <code>olcDatabase={1}bdb,cn=config</code>, будет выглядеть так:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}bdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: to attrs=userPassword</code>
+<code>  by self write</code>
+<code>  by anonymous auth</code>
+<code>  by * none</code>
+<code>olcAccess: to *</code>
+<code>  by self write</code>
+<code>  by * read</code>
+</pre>
+<p class="note">Обратите внимание, что правила переноса строк в LDIF предусматривают, что строка, являющаяся продолжением предыдущей, должна начинаться с пробельного символа, поэтому в данном случае, для сохранения правильного формата ACL, перед условиями <code>by</code> ACL мы выставили <strong>два</strong> пробела.</p>
+<p>Сохраним этот LDIF как файл <code>/tmp/ldifs/12-add_acl.ldif</code> и применим его:</p>
+<pre class="sh">
+# ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/12-add_acl.ldif
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}bdb,cn=config"
+</pre>
+<p>Посмотрим, что получилось:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}bdb)'
+Enter LDAP Password: 
+dn: olcDatabase={1}bdb,cn=config
+objectClass: olcBdbConfig
+olcDatabase: {1}bdb
+olcSuffix: dc=mycompany,dc=ru
+olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcAccess: {0}to attrs=userPassword by self write read by anonymous auth by * 
+ none
+olcAccess: {1}to * by self write by * read
+</pre>
+<p>Наши ACL на месте. Поскольку порядок применения ACL очень важен, к значению данного атрибута добавляется индекс (порядковый номер) X-ORDERED. Дополнительную информацию по ACL можно найти в <a href="//pro-ldap.ru/tr/zytrax/ch6/#access">учебнике LFRS</a> и в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Access Control via Dynamic Configuration">руководстве администратора OpenLDAP</a>.</p>
+<p>Теперь определим индексы для каталога. По правде говоря, индексирование следует производить только для тех атрибутов, по которым будет производиться поиск, то есть исходя из тех задач, которые каталог решает. Лишние индексы будут только занимать место на диске и тормозить процесс внесения изменений в каталог. Для абстрактного случая мы можем проиндексировать атрибут <code>cn</code>&thinsp;&mdash;&thinsp;такой индекс наверняка пригодится. Создадим файл <code>/tmp/ldifs/13-add_index.ldif</code> такого содержания:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}bdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcDbIndex</code>
+<code>olcDbIndex: cn eq,sub,subinitial</code>
+</pre>
+<p>Мы добавляем к настройкам базы данных <code>olcDatabase={1}bdb,cn=config</code> атрибут <code>olcDbIndex</code>, в котором указывается, что для атрибута <code>cn</code> должны быть определены индексы <code>eq</code> (поиск без поискового шаблона), <code>sub</code> и <code>subinitial</code> (два варианта оптимизации под поиск с применением поискового шаблона). Подробнее об индексах можно почитать в <a href="//pro-ldap.ru/tr/zytrax//apa/indeces.html">учебнике LFRS</a>.</p>
+<p>Применим наш LDIF:</p>
+<pre class="sh">
+# ldapmodify -x -D 'cn=config' -W -f /tmp/ldifs/13-add_index.ldif 
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}bdb,cn=config"
+</pre>
+<p>Посмотрим, что получилось:</p>
+<pre class="sh">
+# ldapsearch -x -LLL -D 'cn=config' -W -b 'cn=config' '(olcDatabase={1}bdb)'
+Enter LDAP Password: 
+dn: olcDatabase={1}bdb,cn=config
+objectClass: olcBdbConfig
+olcDatabase: {1}bdb
+olcSuffix: dc=mycompany,dc=ru
+olcDbDirectory: <span><span class="ubuntu">/var/lib/ldap</span><span class="gentoo" style="display:none">/var/lib/openldap-data</span></span>/dc=mycompany,dc=ru
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+olcAccess: {0}to attrs=userPassword by self write read by anonymous auth by * 
+ none
+olcAccess: {1}to * by self write by * read
+</pre>
+<p>Наша настройка индексирования добавилась к уже имеющейся настройке индексирования атрибута <code>objectClass</code>.</p>
+<p>На данном этапе этими настройками мы и ограничимся. В последующих главах, если не будет указано иное, подразумевается, что дальнейшая настройка каталога будет выполняться с этой исходной точки.</p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Чем заняться дальше</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;12 января 2013 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

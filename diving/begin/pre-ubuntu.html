@@ -1,0 +1,76 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>3.1.1 Перед тем как начать&thinsp;&mdash;&thinsp;Ubuntu Linux</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Перед тем как начать&thinsp;&mdash;&thinsp;Ubuntu Linux</p>
+<h1>3.1.1 Перед тем как начать&thinsp;&mdash;&thinsp;Ubuntu Linux</h1>
+<p>После установки OpenLDAP в Ubuntu он, согласно философии этой системы, должен быть пригоден к использованию, то есть сразу быть готовым принимать и обслуживать запросы клиентов. Для этого он должен, как минимум, быть запущен, а значит должна быть какая-то начальная конфигурация. И она, естественно, есть, причём сразу же, "из коробки", это динамическая конфигурация <code>cn=config</code>. Разумеется, возникает она не из воздуха, LDIF инициализации можно найти в файле <code>/usr/share/slapd/slapd.init.ldif</code>:</p>
+<pre class="list">
+<code># Global config:</code>
+<code>dn: cn=config</code>
+<code>objectClass: olcGlobal</code>
+<code>cn: config</code>
+<code># Where the pid file is put. The init.d script</code>
+<code># will not stop the server if you change this.</code>
+<code>olcPidFile: /var/run/slapd/slapd.pid</code>
+<code># List of arguments that were passed to the server</code>
+<code>olcArgsFile: /var/run/slapd/slapd.args</code>
+<code># Read slapd.conf(5) for possible values</code>
+<code>olcLogLevel: none</code>
+<code># The tool-threads parameter sets the actual amount of cpu's that is used</code>
+<code># for indexing.</code>
+<code>lcToolThreads: 1</code>
+<code></code>
+<code># Frontend settings</code>
+<code>dn: olcDatabase={-1}frontend,cn=config</code>
+<code>objectClass: olcDatabaseConfig</code>
+<code>objectClass: olcFrontendConfig</code>
+<code>olcDatabase: {-1}frontend</code>
+<code># The maximum number of entries that is returned for a search operation</code>
+<code>olcSizeLimit: 500</code>
+<code># Allow unlimited access to local connection from the local root user</code>
+<code>olcAccess: {0}to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break</code>
+<code>olcAccess: {1}to dn.base="" by * read</code>
+<code>olcAccess: {2}to dn.base="cn=subschema" by * read</code>
+<code></code>
+<code># Config db settings</code>
+<code>dn: olcDatabase=config,cn=config</code>
+<code>objectClass: olcDatabaseConfig</code>
+<code>olcDatabase: config</code>
+<code># Allow unlimited access to local connection from the local root user</code>
+<code>olcAccess: to * by dn.exact=gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth manage by * break</code>
+<code></code>
+<code># Load schemas</code>
+<code>dn: cn=schema,cn=config</code>
+<code>objectClass: olcSchemaConfig</code>
+<code>cn: schema</code>
+<code></code>
+<code>include: file:///etc/ldap/schema/core.ldif</code>
+</pre>
+<p>Конфигурация, что ни на есть, базовая, остальное&thinsp;&mdash;&thinsp;на усмотрение администратора. Самый главный вопрос: как же подключиться к такой службе каталогов, не зная ни DN подключения, ни пароля? В Ubuntu (и некоторых других системах) применяется оригинальный подход, когда для подключения к <code>cn=config</code> используется нестандартный интерфейс <code>ldapi:///</code>, а для аутентификации&thinsp;&mdash;&thinsp;<a href="//pro-ldap.ru/tr/admin24/sasl.html#EXTERNAL">механизм SASL-аутентификации EXTERNAL</a> вместо простой парольной аутентификации. Обратите внимание на строку 33 приведённого выше LDIF: в ней предоставляется доступ на управление каталогом <code>cn=config</code> пользователю Unix-системы с uid и gid равными нулю, то есть пользователю <code>root</code>. Таким образом, пользователь <code>root</code>, выполнив однажды аутентификацию в системе, получает сквозной беспарольный доступ на редактирование каталога <code>cn=config</code>. Именно поэтому в ориентированных на Ubuntu HOWTO по OpenLDAP везде фигурируют вызовы такого плана:</p>
+<pre class="sh">
+# ldapmodify -H ldapi:/// -Y EXTERNAL -f /some/file.ldif
+</pre>
+<p>Спорить о преимуществах и недостатках такого подхода можно долго. Если он Вас устраивает, можете миновать стадию <a href="init.html">инициализации каталога cn=config</a> и сразу переходить к <a href="module.html">работе с модулями</a>, не забывая в дальнейшем указывать в вызовах <code>ldapadd</code> и <code>ldapmodify</code> соответствующие параметры.</p>
+<p>Если же, как и было задумано, мы будем инициализировать <code>cn=config</code> с "нуля" и работать с парольной аутентификацией, нам нужно привести <code>slapd</code> в "исходное" состояние. Для этого остановим <code>slapd</code> и переместим (точнее, переименуем) директорию с его настройками:</p>
+<pre class="sh">
+# service slapd stop
+Stopping OpenLDAP: slapd.
+# mv /etc/ldap/slapd.d /etc/ldap/slapd.d.init-ubuntu
+</pre>
+<p>В принципе, этого достаточно. Но, чтобы уж совсем было красиво, мы можем отключить "лишние" интерфейсы, на которых <code>slapd</code> будет ожидать подключения. Для этого в файле <code>/etc/default/slapd</code> заменим значение переменной <code>SLAPD_SERVICES</code> с <code>"ldap:/// ldapi:///"</code> на <code>"ldap:///"</code> (ожидание подключений на всех сетевых интерфейсах на стандартном порту 389):</p>
+<pre class="list">
+#SLAPD_SERVICES="ldap:/// ldapi:///"
+SLAPD_SERVICES="ldap:///"
+</pre>
+<p>Всё, можно приступать к <a href="init.html">инициализации каталога cn=config</a></p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Начало работы</a> > Перед тем как начать&thinsp;&mdash;&thinsp;Ubuntu Linux</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2014 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;04 апреля 2014 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
