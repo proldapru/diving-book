@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Исходное положение</p>
+<h1>Исходное положение</h1>
+<p>В данной главе за исходное положение примем базу данных <code>mdb</code> с минимальными настройками, как после <a href="../begin/more.html">инициализации</a>, только без наложения <code>ppolicy</code>:</p>
+<pre class="sh">
+$ ldapsearch -xLLL -o ldif-wrap=no -D cn=config -w secret -b olcDatabase={1}mdb,cn=config 
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to * by self write by * read
+</pre>
+<p>Сам пользовательский каталог тоже имеет минимальное наполнение:</p>
+<pre class="sh">
+$ ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru
+dn: dc=mycompany,dc=ru
+objectClass: organization
+objectClass: dcObject
+dc: mycompany
+o: My Company
+</pre>
+
+<p>Добавим туда контейнеры для учётных записей пользователей и групп, а также несколько самых простых учётных записей пользователей. Для этого создадим такой файл <code>001-containers_and_users.ldif</code>:</p>
+<pre class="list">
+<code class="c"># Контейнер для учётных записей пользователей</code>
+<code>dn: ou=People,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: People</code>
+<code></code>
+<code class="c"># Учётные записи пользователей</code>
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>objectClass: uidObject</code>
+<code>uid: antonova</code>
+<code>cn: Antonina Antonova</code>
+<code>sn: Antonova</code>
+<code>userPassword: antonovaPassword</code>
+<code></code>
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>objectClass: uidObject</code>
+<code>uid: ivanov</code>
+<code>cn: Ivan Ivanov</code>
+<code>sn: Ivanov</code>
+<code>userPassword: ivanovPassword</code>
+<code></code>
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>objectClass: uidObject</code>
+<code>uid: petrov</code>
+<code>cn: Petr Petrov</code>
+<code>sn: Petrov</code>
+<code>userPassword: petrovPassword</code>
+<code></code>
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>objectClass: uidObject</code>
+<code>uid: sidorov</code>
+<code>cn: Sidor Sidorov</code>
+<code>sn: Sidorov</code>
+<code>userPassword: sidorovPassword</code>
+<code></code>
+<code class="c"># Контейнер для групп</code>
+<code>dn: ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: Groups</code>
+</pre>
+
+<p>И применим его:</p>
+<pre class="sh">
+$ ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./001-containers_and_users.ldif
+Enter LDAP Password:
+adding new entry "ou=People,dc=mycompany,dc=ru"
+
+adding new entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
+
+adding new entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+
+adding new entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+adding new entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+
+adding new entry "ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Итак, исходное для данной главы содержимое каталога:</p>
+<pre class="sh">
+$ ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru 1.1
+dn: dc=mycompany,dc=ru
+
+dn: ou=People,dc=mycompany,dc=ru
+
+dn: uid=antonova,ou=People,dc=mycompany,dc=ru
+
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+
+dn: ou=Groups,dc=mycompany,dc=ru
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Исходное положение</p>
+<div class="about"><a href="http://pro-ldap.ru">Pro-LDAP.ru</a> 2013-2017 г. Последнее изменение страницы &mdash; 25 декабря 2017 г. Вопросы и предложения принимаются на <a href="https://pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

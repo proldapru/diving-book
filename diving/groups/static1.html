@@ -1,0 +1,1084 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: групповые условия в ACL и наложение refint</p>
+<h1>Статические группы: групповые условия в ACL и наложение refint</h1>
+<h3>Содержание</h3>
+<div class="contents">
+<ul>
+<li><a href="#acl_group_conditions">Групповые условия в ACL OpenLDAP</a></li>
+<li><a href="#refint">Наложение refint</a></li>
+<li><a href="#acl_dnattr">Ещё немного об ACL</a></li>
+<li><a href="#summary">Итоговые настройки</a></li>
+</ul>
+</div>
+
+<h2 id="acl_group_conditions">Групповые условия в ACL OpenLDAP</h2>
+<p>На этом этапе мы попробуем разобраться с действиями системного администратора при ведении групповых записей в каталоге, а также с тем, как использовать группы для разграничения доступа к самому каталогу на базе OpenLDAP.</p>
+<p>Сначала добавим в каталог две группы: <em>OpenLDAP Admins</em> и <em>OpenLDAP Operators</em>. Членам первой группы будет разрешено менять пароли учётных записей пользователей в каталоге, а членам второй&thinsp;&mdash;&thinsp;изменять любые данные в каталоге (за исключением паролей пользователей). Построим записи групп на объектном классе <code>groupOfNames</code>:</p>
+<pre class="list">
+<code class="c"># Группа "Администраторы каталога"</code>
+<code>dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>cn: OpenLDAP Admins</code>
+<code>member: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Группа "Операторы каталога"</code>
+<code>dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>cn: OpenLDAP Operators</code>
+<code>member: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Добавим их в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_groups.ldif</strong>
+Enter LDAP Password: 
+adding new entry "cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Теперь мы можем усовершенствовать наши ACL (относительно <a href="initial_position.html">исходных</a>):</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcAccess</code>
+<code>olcAccess: to attrs=userPassword</code>
+<code>  by self write</code>
+<code>  by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write</code>
+<code>  by anonymous auth</code>
+<code>  by * none</code>
+<code>olcAccess: to *</code>
+<code>  by self write</code>
+<code>  by group.exact="cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru" write</code>
+<code>  by * read</code>
+</pre>
+
+<p class="note">Обратите внимание, что по правилам переноса строк в LDIF строка, являющаяся продолжением предыдущей, должна начинаться с пробельного символа, поэтому в данном случае, для сохранения правильного формата ACL, перед условиями <code>by</code> ACL мы выставили <strong>два</strong> пробела.</p>
+
+<p>В оба имеющихся правила мы добавили стандартное групповое условие <code>by</code> в ACL (строки 6 и 11). Модификатор <code>.exact</code> после ключевого слова <code>group</code> говорит о том, что в групповом условии указано полное уникальное имя (DN) записи группы. Этот модификатор применяется по умолчанию, его можно было не задавать явно.</p>
+
+<p>Согласно групповому условию в первом ACL (строка 6) члены группы <em>cn=OpenLDAP&nbsp;Admins,ou=Groups,dc=mycompany,dc=ru</em>, то есть те записи, DN которых перечислены в атрибутах <code>member</code> этой группы, получат право на изменение (<code>write</code>) атрибута <code>userPassword</code>. А согласно групповому условию во втором ACL (строка 11) члены группы <em>cn=OpenLDAP&nbsp;Operators,ou=Groups,dc=mycompany,dc=ru</em> получат право на изменение всего остального содержимого каталога (за исключением атрибута <code>userPassword</code>).</p>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./101-modify_acl_1.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {1}to * by self write by group.exact="cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru" write by * read
+</pre>
+
+<p>А теперь протестируем наши ACL утилитой <code>slapacl</code>. Пользователь, авторизовавшийся от имени учётной записи <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em>, как член группы <em>cn=OpenLDAP&nbsp;Admins,ou=Groups,dc=mycompany,dc=ru</em> должен получить право на изменение атрибута <code>userPassword</code>, а пользователь <em>uid=antonova,ou=People,dc=mycompany,dc=ru</em>, не являющийся членом этой группы,&thinsp;&mdash;&thinsp;вообще не иметь никакого доступа (кроме <code>userPassword</code> своей записи). Убедимся в этом, протестировав доступ к атрибуту <code>userPassword</code> пользователя <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru userPassword</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+userPassword: write(=wrscxd)
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru userPassword</strong>
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+userPassword: none(=0)
+</pre>
+<p class="note">Утилите <code>slapacl</code> для работы требуется считать списки контроля доступа из конфигурационной директории <code>slapd.d</code>, поэтому мы запускаем её с правами пользователя <code>root</code>.</p>
+
+<p>Всё отлично. Теперь протестируем обратную ситуацию: согласно второму ACL пользователь <em>uid=antonova,ou=People,dc=mycompany,dc=ru</em>, являющийся членом группы <em>cn=OpenLDAP&nbsp;Operators,ou=Groups,dc=mycompany,dc=ru</em>, должен иметь право изменять любую запись в каталоге (кроме атрибута <code>userPassword</code>), а пользователь <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em>, не являющийся членом этой группы,&thinsp;&mdash;&thinsp;только читать содержимое записей (свою собственную запись он, конечно же, может изменять). Убедимся в этом, протестировав доступ к атрибуту <code>cn</code> пользователя <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+cn: write(=wrscxd)
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+cn: read(=rscxd)
+</pre>
+
+<p>Наши ACL работают. Но, согласитесь, оставлять за администраторами каталога лишь право изменять пароли выглядит нелогично. Можно поступить просто и добавить пользователя <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em> в группу <em>cn=OpenLDAP&nbsp;Operators,ou=Groups,dc=mycompany,dc=ru</em>:</p>
+<pre class="list">
+<code>dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Однако не будем спешить и вспомним о том, что умный администратор&thinsp;&mdash;&thinsp;это "ленивый" администратор. В ACL OpenLDAP есть понятие набора (<code>set</code>), позволяющее создавать различные сложные варианты контроля доступа. В данном случае нам подойдёт вариант рекурсивной проверки "вложенных" групп. Сначала мы добавим в качестве члена в группу <em>cn=OpenLDAP&nbsp;Operators,ou=Groups,dc=mycompany,dc=ru</em> "вложенную" группу <em>cn=OpenLDAP&nbsp;Admins,ou=Groups,dc=mycompany,dc=ru</em>:</p>
+
+<pre class="list">
+<code>dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Применим изменения от имени пользователя <em>antonova</em> (у которого есть соответствующие права на редактирование каталога):</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./003-add_group_to_group.ldif</strong>
+modifying entry "cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b 'cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru' member</strong>
+dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+member: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+</pre>
+
+<p>Теперь модифицируем наш второй ACL:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to *</code>
+<code>  by self write</code>
+<code>  by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write</code>
+<code>  by * read</code>
+</pre>
+
+<p>Интересующее нас определение набора находится в условии <code>by</code> в 9-ой строке. Его можно "расшифровать" так: в качестве исходной точки берётся группа <em>cn=OpenLDAP&nbsp;Operators,ou=Groups,dc=mycompany,dc=ru</em>, ищутся атрибуты <code>member</code> в ней, а также рекурсивно вниз во всех тех записях, которые были обнаружены в атрибутах <code>member</code> первоначальной и последующих записей (необходимость рекурсивного поиска обозначается знаком "звёздочки" <code>*</code>). В данном случае в итоге такого рекурсивного обхода у нас появляется набор из трёх записей (выдержка из log-файла slapd, запущенного в режиме журналирования <code>acl</code>):</p>
+<pre class="list">
+ACL set[0]=uid=antonova,ou=people,dc=mycompany,dc=ru
+ACL set[1]=cn=openldap admins,ou=groups,dc=mycompany,dc=ru
+ACL set[2]=uid=ivanov,ou=people,dc=mycompany,dc=ru
+</pre>
+<p>После построения набора определяется, входит ли в него DN пользователя, прошедшего аутентификацию (условие ACL <code>user</code>). Если да, этому пользователю будут предоставлены соответствующие права. Подробно алгоритм работы данного набора разбирается в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Groups%20of%20Groups">примере 8.5.1 главы 8 учебника OLAG24</a>.</p>
+
+<p>Применим изменения и проверим (от имени <code>rootDN</code> конфигурационного каталога <code>cn=config</code>):</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./102-modify_acl_2.ldif</strong> 
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {1}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>Протестируем работу ACL утилитой <code>slapacl</code>. Проверим, получит ли пользователь <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em> доступ к атрибуту <code>cn</code> пользователя <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+cn: write(=wrscxd)
+</pre>
+
+<p>Да, всё работает, как ожидалось. Для убедительности проведём реальную проверку, изменив атрибут <code>cn</code> пользователя <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="list">
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: cn</code>
+<code>cn: Petr Petrovich Petrov</code>
+</pre>
+
+<p>Изменения выполняем от имени пользователя <em>ivanov</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./004-modify_petrov.ldif</strong>
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b uid=petrov,ou=People,dc=mycompany,dc=ru</strong>
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: petrov
+sn: Petrov
+cn: Petr Petrovich Petrov
+</pre>
+
+<p>Всё прошло успешно. Теперь администраторы каталога будут получать тот же доступ на изменение записей, что и операторы, и, сверх того, смогут изменять пароли учётных записей пользователей.</p>
+
+<p>Но вернёмся к нашим групповым условиям ACL. Группы в предыдущих примерах строились на объектном классе <code>groupOfNames</code>, члены в них указывались в атрибутах <code>member</code>, и <code>slapd</code> при оценке ACL принимал это как само собой разумеющееся. Но что, если у нас группы строятся на совсем другом объектном классе и атрибутах? Для <code>slapd</code> это тоже не проблема. Для нашего следующего примера заведём "роли", то есть группы на объектном классе <code>organizationalRole</code>:</p>
+
+<pre class="list">
+<code class="c"># Контейнер для ролей</code>
+<code>dn: ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: Roles</code>
+<code></code>
+<code class="c"># Роль "Системный администратор"</code>
+<code>dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>cn: SysAdmin</code>
+<code>roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Роль "Разработчик"</code>
+<code>dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>cn: Developer</code>
+<code>roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+ 
+<p>Мы добавляем контейнер для ролей (чтобы не путаться в ролях и группах) и две роли: системный администратор и разработчик. Применим наши изменения:</p>
+
+<pre class="sh">
+$ <strong>ldapadd -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./005-add_roles.ldif</strong>
+adding new entry "ou=Roles,dc=mycompany,dc=ru"
+
+adding new entry "cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru"
+
+adding new entry "cn=Developer,ou=Roles,dc=mycompany,dc=ru"
+</pre>
+
+<p>Предположим, что в компании разработан веб-интерфейс для ведения учётных записей пользователей. Разным пользователям в нём предоставляются различные права в зависимости от роли в организации. Пользователям, выполняющим роль системного администратора, предоставлено право изменять пароли всех пользователей. Для реализации этой функции им необходимо предоставить соответствующие привилегии на уровне каталога. Изменим наш первый ACL:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {0}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword</code>
+<code>  by self write</code>
+<code>  by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write</code>
+<code>  by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write</code>
+<code>  by anonymous auth</code>
+<code>  by * none</code>
+</pre>
+
+<p>Мы сузили диапазон действия нашего ACL записями в ветке <em>ou=People,dc=mycompany,dc=ru</em> (строка 7), поскольку учётные записи пользователей находятся именно там. Но основное изменение&thinsp;&mdash;&thinsp;это условие <code>by</code> в строке 10. По сути, это развёрнутый формат стандартного группового условия, в котором явно указывается, запись с каким объектным классом считать группой, и значения каких атрибутов считать членами этой группы. Условие в строке 10 говорит о том, что члены построенной на объектном классе <code>organizationalRole</code> группы <em>cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</em> (DN которой задано полностью, на что указывает модификатор <code>.exact</code>), то есть записи, DN которых перечислены в значениях атрибута <code>roleOccupant</code> этой группы, получат права на изменения атрибута <code>userPassword</code> записей в ветке <em>ou=People,dc=mycompany,dc=ru</em> (строка 7). Групповое условие <code>by</code> в строке 9 точно такое же, просто объектный класс <code>groupOfNames</code> и атрибут <code>member</code> считаются значениями по умолчанию, и поэтому опущены.</p>
+
+<p class="note">Полный формат группового условия <code>by</code> даёт возможность использовать в качестве группы записи практически с любыми объектными классами и любыми атрибутами с <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксисом DN</a>, например, запись с классом <code>inetOrgPerson</code>, членами которой будут считаться значения атрибута <code>secretary</code>. Но прибегать к таким ухищрениям нецелесообразно, если, конечно, Вы не собираетесь всех запутать.</p>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./103-modify_acl_3.ldif</strong> 
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {1}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>Убедимся в корректности работы ACL с помощью утилиты <code>slapacl</code>. Проверим, получит ли пользователь <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em> (как член группы <em>cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</em>) доступ к атрибуту <code>userPassword</code> пользователя <em>uid=antonova,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=petrov,ou=People,dc=mycompany,dc=ru -b uid=antonova,ou=People,dc=mycompany,dc=ru userPassword</strong>
+authcDN: "uid=petrov,ou=people,dc=mycompany,dc=ru"
+userPassword: write(=wrscxd)
+</pre>
+
+<p>Всё работает, как ожидалось.</p>
+
+<p>Теперь предположим, что разработчики компании в данный момент работают над телефонным справочником, для чего им требуются права на изменение атрибутов <code>telephoneNumber</code> и <code>description</code> учётных записей пользователей. Чтобы предоставить им такие права на уровне каталога, введём новый ACL:</p>
+
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description</code>
+<code>  by self write</code>
+<code>  by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write</code>
+<code>  by group/organizationalRole/roleOccupant.expand="cn=Developer,ou=Roles,$1" write</code>
+<code>  by * none</code>
+</pre>
+
+<p>Этот ACL будет вторым (индекс 1), он поместится между двумя существующими. Мы сознательно несколько избыточно усложнили его структуру, чтобы продемострировать использование регулярных выражений и модификатора подстановки <code>.expand</code>. В строке 4 мы задаём условие, что контроль доступа будет осуществляться над атрибутами <code>telephoneNumber</code> и <code>description</code> записей каталога, DN которых соответствуют указанному регулярному выражению. В данном случае регулярное выражение говорит о том, что RDN записи должно быть построено на значении атрибута <code>uid</code>, RDN первого предка должно быть <code>ou=People</code>, а RDN двух последующих предков должны быть построены на значении атрибута <code>dc</code> (эти два RDN, за счёт заключения их в скобки, будут помещены в переменную <code>$1</code>), и на этом DN записи заканчивается. Строки 5 и 6 нужны для того, чтобы контроль над этими атрибутами не был потерян самим пользователем и членами группы <em>OpenLDAP&nbsp;Operators</em> (обратите внимание на использование модификатора <code>.expand</code> и подстановки значения переменной <code>$1</code> в DN группы в строке 6). Строка 7&thinsp;&mdash;&thinsp;это уже знакомая нам полная форма группового условия <code>by</code>, просто немного видоизменённая модификатором <code>.expand</code> и подстановкой в DN группы значения переменной <code>$1</code>. Смысл строки 8 очевиден.</p>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./104-modify_acl_4.ldif</strong> 
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {1}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description by self write by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write by group/organizationalRole/roleOccupant.expand="cn=Developer,ou=Roles,$1" write by * none
+olcAccess: {2}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>А теперь убедимся, что пользователь <em>uid=sidorov,ou=People,dc=mycompany,dc=ru</em>, как член группы <em>cn=Developer,ou=Roles,dc=mycompany,dc=ru</em>, получит доступ к атрибутам <code>telephoneNumber</code>, <code>description</code>, а заодно и к атрибуту <code>cn</code> пользователя <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=sidorov,ou=People,dc=mycompany,dc=ru -b uid=ivanov,ou=People,dc=mycompany,dc=ru telephoneNumber description cn</strong>
+authcDN: "uid=sidorov,ou=people,dc=mycompany,dc=ru"
+telephoneNumber: write(=wrscxd)
+description: write(=wrscxd)
+cn: read(=rscxd)
+</pre>
+
+<p>По второму ACL получены права на изменение атрибутов  <code>telephoneNumber</code> и <code>description</code>, а по третьему&thinsp;&mdash;&thinsp;на чтение атрибута <code>cn</code>.</p>
+
+<p>Наконец, удостоверимся, что уже рассмотренное нами условие <code>by</code> с использованием наборов работает также и с нестандартными группами. Предоставим для пользователей, исполняющих роль <em>SysAdmin</em> те же права, что и для исполняющих роль <em>Developer</em>. Для этого добавим DN роли <em>cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</em> в качестве значения атрибута <code>roleOccupant</code> в запись <em>cn=Developer,ou=Roles,dc=mycompany,dc=ru</em>:</p>
+
+<pre class="list">
+<code>dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: roleOccupant</code>
+<code>roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./006-add_role_to_role.ldif</strong> 
+modifying entry "cn=Developer,ou=Roles,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b 'cn=Developer,ou=Roles,dc=mycompany,dc=ru' roleOccupant</strong>
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+</pre>
+
+<p>Модифицируем наш второй ACL. Теперь мы будем рекурсивно искать значения атрибута <code>roleOccupant</code> в записях, начиная с записи роли <em>Developer</em> (обратите внимание, что модификатор <code>.expand</code> и подстановка переменных работает и в наборах):</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description</code>
+<code>  by self write</code>
+<code>  by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write</code>
+<code>  by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write</code>
+<code>  by * none</code>
+</pre>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./105-modify_acl_5.ldif</strong> 
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {1}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description by self write by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write by * none
+olcAccess: {2}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>Осталось убедиться в нашей правоте. Удостоверимся, что пользователь <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>, как член группы <em>cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</em>, "вложенной" в группу <em>cn=Developer,ou=Roles,dc=mycompany,dc=ru</em>, получит доступ к атрибутам <code>telephoneNumber</code>, <code>description</code> и <code>cn</code> пользователя <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em>:</p></p>
+<pre class="sh">
+# <strong>slapacl -D uid=petrov,ou=People,dc=mycompany,dc=ru -b uid=ivanov,ou=People,dc=mycompany,dc=ru telephoneNumber description cn</strong>
+authcDN: "uid=petrov,ou=people,dc=mycompany,dc=ru"
+telephoneNumber: write(=wrscxd)
+description: write(=wrscxd)
+cn: read(=rscxd)
+</pre>
+
+<p>Всё работает, как ожидалось. Таким образом, мы рассмотрели использование разных вариантов групповых условий <code>by</code> ACL <code>slapd</code>, а также условия <code>by</code> с наборами для рекурсивного поиска членов "вложенных" групп. Осталось рассмотреть ещё один интересный вариант ACL, связанный с группами: управление значениями атрибутов записи, в которых могут находиться DN других записей. Звучит запутанно, проще продемонстрировать на примере. Типичная задача с таким типом ACL формулируется так: есть некоторая группа, требуется позволить пользователям добавлять себя в члены этой группы (и удалять себя из её членов). К примеру, на корпоративном портале есть лента новостей, для доступа к ней нужно состоять в группе <em>News&nbsp;Readers</em>:</p>
+<pre class="list">
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>cn: News Readers</code>
+<code>member: cn=dummy_member</code>
+</pre>
+
+<p>Поскольку группа пока пуста, а атрибут <code>member</code> обязателен для объектного класса <code>groupOfNames</code>, пришлось ввести фиктивного члена <em>cn=dummy_member</em> (это общепринятая практика для классов <code>groupOfNames</code> и <code>groupOfUniqueNames</code>). Добавим эту запись в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./007-add_news_readers_group.ldif</strong> 
+adding new entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Чтобы любой желающий мог получить доступ к корпоративным новостям, предоставим пользователям добавлять и удалять DN своих записей в атрибут <code>member</code> нашей группы. Составим такой ACL:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member</code>
+<code>  by dnattr=member selfwrite</code>
+</pre>
+
+<p>Этот ACL будет добавлен перед всеми уже существующими (индекс 0). Согласно строке 4, мы ограничиваем доступ к атрибуту <code>member</code> группы <em>News&nbsp;Readers</em>. Самая интересная для нас строка 5. Условие <code>by</code> в ней говорит о том, что записи, DN которых перечислены в атрибуте <code>member</code> (формулировка <code>dnattr=member</code>) получат доступ уровня <code>write</code> только для добавления/удаления своего собственного DN (формулировка <code>selfwrite</code>) в атрибут <code>member</code> группы <em>News&nbsp;Readers</em> (согласно условию <code>to</code> в строке 4).</p>
+
+<p>Чтобы члены группы <em>OpenLDAP&nbsp;Operators</em> не утратили контроль над записью группы <em>News&nbsp;Readers</em>, мы можем, как это делалось во всех предыдущих примерах, добавить им явно привилегии <code>write</code>:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member</code>
+<code>  by dnattr=member selfwrite</code>
+<code>  by group.exact="cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru" write</code>
+</pre>
+
+<p>Но в этот раз мы поступим иначе, и укажем продолжать обход ACL, если было найдено совпадение с условием <code>to</code>, но не найдено ни одного совпадения с условиями <code>by</code>:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member</code>
+<code>  by dnattr=member selfwrite</code>
+<code>  by * break</code>
+</pre>
+
+<p>В этом случае, если член группы <em>OpenLDAP&nbsp;Operators</em> захочет модифицировать атрибут <code>member</code> группы <em>News&nbsp;Readers</em>, он сможет это сделать, миновав этот ACL и получив привилегии в последнем из списка ACL. Применим наши изменения и проверим результат:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./106-modify_acl_6.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member by dnattr=member selfwrite by * break
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {2}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description by self write by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write by * none
+olcAccess: {3}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>К сожалению, инструмент <code>slapacl</code> (по крайней мере в OpenLDAP версии 2.4.45) не справляется с таким условием ACL:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=sidorov,ou=People,dc=mycompany,dc=ru -b 'cn=News Readers,ou=Groups,dc=mycompany,dc=ru' member/write:uid=sidorov,ou=People,dc=mycompany,dc=ru</strong>
+authcDN: "uid=sidorov,ou=people,dc=mycompany,dc=ru"
+write access to member=uid=sidorov,ou=People,dc=mycompany,dc=ru: DENIED
+</pre>
+
+<p>Поэтому протестируем его путём внесения изменений в каталог. Сначала проверим, сможет ли пользователь <em>sidorov</em> добавить самого себя в группу <em>News&nbsp;Readers</em>:</p>
+
+<pre class="list">
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Попробуем применить эти изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=sidorov,ou=People,dc=mycompany,dc=ru -w sidorovPassword -f ./008-add_self_to_news_readres.ldif</strong>
+modifying entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b 'cn=News Readers,ou=Groups,dc=mycompany,dc=ru' member</strong>
+dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru
+member: cn=dummy_member
+member: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Всё работает как задумано. Теперь проверим, сможет ли он добавить в эту группу другого пользователя:</p>
+<pre class="list">
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Попробуем применить эти изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=sidorov,ou=People,dc=mycompany,dc=ru -w sidorovPassword -f ./009-add_another_to_news_readers.ldif</strong>
+modifying entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+</pre>
+
+<p>Опять же, результат ожидаем: прав для внесения подобных изменений не хватает. Наконец проверим, сможет ли <em>sidorov</em> удалить себя из членов группы <em>News&nbsp;Readers</em>:</p>
+<pre class="list">
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>delete: member</code>
+<code>member: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Попробуем применить эти изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=sidorov,ou=People,dc=mycompany,dc=ru -w sidorovPassword -f ./010-del_self_from_news_readers.ldif</strong>
+modifying entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b 'cn=News Readers,ou=Groups,dc=mycompany,dc=ru' member</strong>
+dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru
+member: cn=dummy_member
+</pre>
+
+<p>Все наши тесты прошли успешно. Теперь составим аналогичный ACL для класса <code>organizationalRole</code>. Предположим, для доступа к корпоративному wiki-контенту требуется получить роль <em>Wiki Reader</em>:</p>
+
+<pre class="list">
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>cn: Wiki Reader</code>
+</pre>
+
+<p>Добавим эту запись в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./011-add_wiki_reader_role.ldif</strong>
+adding new entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+</pre>
+
+<p>Чтобы любой желающий мог получить доступ к корпоративному wiki, предоставим пользователям добавлять и удалять DN своих записей в атрибут <code>roleOccupant</code> записи нашей роли. Составим такой ACL (по аналогии с предыдущим):</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.base="cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru" attrs=roleOccupant</code>
+<code>  by dnattr=roleOccupant selfwrite</code>
+<code>  by * break</code>
+</pre>
+
+<p>Поскольку у этого ACL индекс 0, он будет оцениваться первым в списке ACL. Применим наши изменения и проверим результат:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./107-modify_acl_7.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.base="cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru" attrs=roleOccupant by dnattr=roleOccupant selfwrite by * break
+olcAccess: {1}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member by dnattr=member selfwrite by * break
+olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {3}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description by self write by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write by * none
+olcAccess: {4}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>Для тестирования этого ACL выполним модификации каталога, аналогичные тем, которые мы проводили для группы <em>News&nbsp;Readers</em> (будем выполнять их от имени пользователя <em>sidorov</em>):</p>
+<pre class="list">
+<code class="c"># Модификация 1: добавление себя в группу</code>
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: roleOccupant</code>
+<code>roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Модификация 2: добавление другого человека в группу</code>
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: roleOccupant</code>
+<code>roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Модификация 3: удаление себя из группы</code>
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>delete: roleOccupant</code>
+<code>roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Попробуем выполнить эти модификации:</p>
+<pre class="sh">
+$ <strong>ldapmodify -c -D uid=sidorov,ou=People,dc=mycompany,dc=ru -w sidorovPassword -f ./012-mod_wiki_reader.ldif</strong>
+modifying entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+
+modifying entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+
+modifying entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+</pre>
+
+<p class="note">Аргумент <code>-c</code> команды <code>ldapmodify</code> позволяет продолжить выполнение модификации каталога, если какая-то из операций завершится неудачно.</p>
+
+<p>Все наши тесты завершились, как ожидалось. На этом мы практически закончили рассмотрение возможных групповых условий в ACL OpenLDAP.</p>
+
+<h2 id="refint">Наложение refint</h2>
+<p>Ежедневная рутина системного администратора предполагает, кроме всего прочего, ведение базы учётных записей пользователей и их привилегий доступа к информационным ресурсам организации. С точки зрения каталога это означает добавление/удаление/модификацию записей пользователей, а также поддержание в актуальном состоянии членства в записях-группах. И если с добавлением новых членов в записи-группы обычно проблем не возникает, то необходимость изменения атрибутов членства в многочисленных группах при удалении учётной записи пользователя или изменении её DN нередко выпадает из поля зрения администраторов. Испокон веков для решения этой проблемы администраторы использовали различные скрипты. Разработчики OpenLDAP предлагают своё решение&thinsp;&mdash;&thinsp;наложение <a href="//pro-ldap.ru/tr/man/slapo-refint.5.html">refint</a>.</p>
+
+<p>Суть работы этого наложения заключается в поддержании целостности "ссылочных" атрибутов, то есть тех атрибутов, значениями которых являются DN записей каталога. При изменении DN записи каталога, либо при удалении записи из каталога, соответствующие изменения будут внесены в значения тех "ссылочных" атрибутов, на слежение за которыми было настроено наложение <code>refint</code>.</p>
+
+<p>Как видно, это наложение идеально подходит для атрибутов членства в группах: <code>member</code>, <code>uniqueMember</code> и <code>roleOccupant</code>. Но оно может быть использовано и с любыми другими атрибутами с <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксисом DN</a>: <code>manager</code>, <code>secretary</code>, <code>seeAlso</code> и другими. Поэтому, для того, чтобы сделать примеры настроек более интересными, назначим группам из нашего каталога "владельцев" (атрибут <code>owner</code>):</p>
+<pre class="list">
+<code>dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: owner</code>
+<code>owner: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: owner</code>
+<code>owner: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectclass</code>
+<code>objectclass: extensibleObject</code>
+<code>-</code>
+<code>add: owner</code>
+<code>owner: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectclass</code>
+<code>objectclass: extensibleObject</code>
+<code>-</code>
+<code>add: owner</code>
+<code>owner: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: owner</code>
+<code>owner: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectclass</code>
+<code>objectclass: extensibleObject</code>
+<code>-</code>
+<code>add: owner</code>
+<code>owner: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p class="note">У объектного класса <code>organizationalRole</code> нет атрибута <code>owner</code>, чтобы добавить этот атрибут в запись пришлось воспользоваться специальным классом <code>extensibleObject</code>.</p>
+
+<p>Внесём изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./013-set_groups_owners.ldif</strong>
+modifying entry "cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developer,ou=Roles,dc=mycompany,dc=ru"
+
+modifying entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(owner=*)' owner</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+owner: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+owner: uid=antonova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+owner: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+owner: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru
+owner: uid=sidorov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru
+owner: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Теперь приступим к настройке наложения <code>refint</code>. Для начала подгрузим соответствующий динамический модуль:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: refint.la</code>
+</pre>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./108-add_refint_module.ldif</strong>
+Enter LDAP Password: 
+modifying entry "cn=module{0},cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b cn=module{0},cn=config olcModuleLoad</strong>
+Enter LDAP Password: 
+dn: cn=module{0},cn=config
+olcModuleLoad: {0}back_mdb.la
+olcModuleLoad: {1}refint.la
+</pre>
+
+<p>А теперь настроим слежение за целостностью атрибутов <code>member</code>, <code>roleOccupant</code> и <code>owner</code> в каталоге <em>dc=mycompany,dc=ru</em>:</p>
+<pre class="list">
+<code>dn: olcOverlay=refint,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcRefintConfig</code>
+<code>olcOverlay: refint</code>
+<code>olcRefintAttribute: member</code>
+<code>olcRefintAttribute: roleOccupant</code>
+<code>olcRefintAttribute: owner</code>
+<code>olcRefintNothing: cn=dummy_member</code>
+</pre>
+
+<p>В данном случае мы указали два атрибута настроек наложения: <code>olcRefintAttribute</code> и <code>olcRefintNothing</code>. В первом из них задаются имена атрибутов, за целостностью значений которых будет следить наложение. Во втором атрибуте задаётся DN, которое будет подставлено в качестве значения отслеживаемого атрибута в случае, если все реальные значения этого атрибута будут удалены. Как уже упоминалось выше, некоторые объектные классы, например <code>groupOfNames</code>, требуют обязательного наличия атрибута членства, и при удалении всех членов возникнет нарушение целостности схемы данных каталога. Для предотвращения такой ситуации как раз и предназначена настройка, выполняемая с помощью атрибута <code>olcRefintNothing</code>. Значением этого атрибута должно быть правильно сформированное DN, в нашем случае <em>cn=dummy_member</em>.</p>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapadd -D cn=config -W -f ./109-add_refint_overlay.ldif</strong>
+Enter LDAP Password: 
+adding new entry "olcOverlay=refint,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcOverlay={0}refint,olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcRefintConfig
+olcOverlay: {0}refint
+olcRefintAttribute: member
+olcRefintAttribute: roleOccupant
+olcRefintAttribute: owner
+olcRefintNothing: cn=dummy_member
+</pre>
+
+<p>Теперь посмотрим как это работает. Предположим, что из организации уволился администратор Иван Иванов, и мы собираемся удалить его учётную запись <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em>. Но сначала проверим, в какие группы входит этот пользователь:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=ivanov,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=ivanov,ou=People,dc=mycompany,dc=ru)(owner=uid=ivanov,ou=People,dc=mycompany,dc=ru))'</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Admins
+member: uid=ivanov,ou=People,dc=mycompany,dc=ru
+owner: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: SysAdmin
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+owner: uid=ivanov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Итак, у нас есть две таких группы. Обратим внимание, что в обоих группах пользователь <em>ivanov</em> также является "владельцем" группы (его запись указана в атрибуте <code>owner</code>).</p>
+
+<p>Теперь перейдём к удалению записи из каталога. Его можно произвести разными способами. В данном случае мы будем выполнять его с помощью утилиты <code>ldapmodify</code>. Сформируем LDIF для удаления:</p>
+<pre class="list">
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: delete</code>
+</pre>
+
+<p>И применим его:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./014-delete_user_ivanov.ldif</strong>
+deleting entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+</pre>
+<p class="note">Мы выполняли удаление от имени пользователя <em>antonova</em>. Однако, можно было бы выполнить его и от имени пользователя <em>ivanov</em>, пока его запись ещё присутствовала в каталоге.</p>
+
+<p>Теперь проверим, что произошло с групповыми записями:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=ivanov,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=ivanov,ou=People,dc=mycompany,dc=ru)(owner=uid=ivanov,ou=People,dc=mycompany,dc=ru))'</strong>
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(cn=*Admin*)'</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Admins
+owner: cn=dummy_member
+member: cn=dummy_member
+
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: SysAdmin
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+owner: cn=dummy_member
+</pre>
+
+<p>Первый поисковый запрос ничего не вернул, поскольку при удалении записи <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em> сработало наложение <code>refint</code> и были удалены соответствующие значения тех атрибутов, которые оно отслеживало. Всё закономерно. Вторым запросом мы проверяем содержимое записей интересующих нас групп и убеждаемся, что наложение <code>refint</code> отработало, как и было настроено: атрибуты-ссылки на удалённую запись пользователя были удалены.</p>
+
+<p>Также очевидно, что сработала и вторая настройка нашего наложения: атрибуты, для которых было удалено последнее значение в записи, получили "значение по умолчанию" <em>cn=dummy_member</em>. Если для атрибута <code>member</code> это необходимо (для соблюдения требования схемы данных), то для атрибутов <code>roleOccupant</code> и <code>owner</code>&thinsp;&mdash;&thinsp;совершенно необязательно. Чтобы такого не происходило, мы можем разделить настройки наложения <code>refint</code>, определив "значение по умолчанию" только для тех атрибутов, которым это действительно необходимо, а остальные отслеживаемые атрибуты оставить без такой подстановки. Но сначала приведём в порядок наши группы, заменив фиктивных членов и владельцев реальными:</p>
+<pre class="list">
+<code class="c"># Замена члена и владельца группы OpenLDAP Admins</code>
+<code>dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: member</code>
+<code>member: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>-</code>
+<code>replace: owner</code>
+<code>owner: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Замена владельца роли SysAdmin</code>
+<code>dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: owner</code>
+<code>owner: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./015-replace_dn_attributes.ldif</strong>
+modifying entry "cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(cn=*Admin*)'</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Admins
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+owner: uid=antonova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: SysAdmin
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+owner: uid=petrov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Теперь выполним проанонсированные модификации наложения <code>refint</code>:</p>
+<pre class="list">
+<code>dn: olcOverlay={0}refint,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcRefintAttribute</code>
+<code>olcRefintAttribute: member</code>
+<code></code>
+<code>dn: olcOverlay={1}refint,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: add</code>
+<code>objectClass: olcRefintConfig</code>
+<code>olcOverlay: {1}refint</code>
+<code>olcRefintAttribute: roleOccupant</code>
+<code>olcRefintAttribute: owner</code>
+</pre>
+
+<p>Мы модифицируем уже имеющееся наложение <code>refint</code> и добавляем ещё одно. Удобнее будет рассмотреть получившиеся в итоге этих изменений записи, поэтому сначала применим изменения и выведем результаты:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./110-modify_refint_overlay.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcOverlay={0}refint,olcDatabase={1}mdb,cn=config"
+
+adding new entry "olcOverlay={1}refint,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b cn=config '(objectClass=olcRefintConfig)'</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcRefintConfig
+olcOverlay: {0}refint
+olcRefintNothing: cn=dummy_member
+olcRefintAttribute: member
+
+dn: olcOverlay={1}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcRefintConfig
+olcOverlay: {1}refint
+olcRefintAttribute: roleOccupant
+olcRefintAttribute: owner
+</pre>
+
+<p>Как мы видим, в первом наложении отслеживается атрибут <code>member</code>, и для него задано "значение по умолчанию" <em>cn=dummy_member</em>. Во втором наложении отслеживаются атрибуты <code>roleOccupant</code> и <code>owner</code>, и "значение по умолчанию" для них не задаётся. Именно такие настройки мы и обсуждали.</p>
+
+<p>Посмотрим, как это работает на примере удаления записи пользователя <em>petrov</em>. На этот раз мы будем выполнять удаление с помощью утилиты <code>ldapdelete</code>. Перед удалением и после его выполнения отследим наличие "ссылочных" атрибутов в записях-группах, в которых этот пользователь был членом или владельцем (как в предыдущем случае):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=petrov,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=petrov,ou=People,dc=mycompany,dc=ru)(owner=uid=petrov,ou=People,dc=mycompany,dc=ru))'</strong>
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: SysAdmin
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+owner: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developer
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+owner: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+$ <strong>ldapdelete -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword uid=petrov,ou=People,dc=mycompany,dc=ru</strong>
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=petrov,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=petrov,ou=People,dc=mycompany,dc=ru)(owner=uid=petrov,ou=People,dc=mycompany,dc=ru))'</strong>
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(cn=SysAdmin)(cn=Developer))'</strong>
+dn: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: SysAdmin
+
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developer
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+</pre>
+
+<p>Результаты эксперимента показывают, что, во-первых, наложение отработало корректно при удалении "ссылочных" атрибутов (<code>roleOccupant</code> и <code>owner</code>), а во-вторых, излишней подстановки "значения по умолчанию" для этих атрибутов не произошло (роль <em>SysAdmin</em>, например, осталась без владельца и без членов).</p>
+
+<p>Наконец, проверим поведение наложения <code>refint</code> при переименовании записи пользователя в каталоге. Предположим, что Тоня Антонова вышла замуж и взяла фамилию мужа. LDIF для внесения изменений в каталог:</p>
+<pre class="list">
+<code class="c"># Переименование записи antonova</code>
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modrdn</code>
+<code>newrdn: uid=zhukova</code>
+<code>deleteoldrdn: 1</code>
+<code></code>
+<code class="c"># Модификация записи zhukova</code>
+<code>dn: uid=zhukova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: cn</code>
+<code>cn: Antonina Zhukova</code>
+<code>-</code>
+<code>replace: sn</code>
+<code>sn: Zhukova</code>
+<code>-</code>
+<code>replace: userPassword</code>
+<code>userPassword: zhukovaPassword</code>
+</pre>
+
+<p>Как и в предыдущих случаях, выведем содержимое групповых записей до и после изменений:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=antonova,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=antonova,ou=People,dc=mycompany,dc=ru)(owner=uid=antonova,ou=People,dc=mycompany,dc=ru))'</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Admins
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+owner: uid=antonova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Operators
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+member: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+owner: uid=antonova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developer
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+
+$ <strong>ldapmodify -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./016-rename_antonova.ldif</strong>
+modifying rdn of entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=zhukova,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=antonova,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=antonova,ou=People,dc=mycompany,dc=ru)(owner=uid=antonova,ou=People,dc=mycompany,dc=ru))'</strong>
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=uid=zhukova,ou=People,dc=mycompany,dc=ru)(roleOccupant=uid=zhukova,ou=People,dc=mycompany,dc=ru)(owner=uid=zhukova,ou=People,dc=mycompany,dc=ru))'</strong>
+dn: cn=Developer,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developer
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru
+roleOccupant: uid=zhukova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Admins
+owner: uid=zhukova,ou=People,dc=mycompany,dc=ru
+member: uid=zhukova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: OpenLDAP Operators
+member: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+member: uid=zhukova,ou=People,dc=mycompany,dc=ru
+owner: uid=zhukova,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Итак, все наши тесты прошли успешно и показали, что наложение <code>refint</code>&thinsp;&mdash;&thinsp;элегантный, эффективный и гибкий инструмент для автоматизации рутинных процессов системного администрирования.</p>
+
+<p>Остаётся добавить, что модификации, выполняемые этим наложением, не распространяются при репликации каталога. Поэтому для корректной работы в каталогах с репликацией наложение <code>refint</code> должно быть идентичным образом настроено на всех поставщиках и потребителях репликации.</p>
+
+<h2 id="acl_dnattr">Ещё немного об ACL</h2>
+<p>Прежде чем подводить итоги, вернёмся ненадолго к нашим ACL. В связи с тем, что у наших групп появились владельцы, мы можем рассмотреть ещё один аспект ACL, связанный с атрибутами, имеющими <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксис DN</a> (мы уже опробовали конструкцию <code>dnattr</code> в условии <code>by</code> в ACL с индексами 0 и 1). Дополним эти ACL так, чтобы предоставить владельцам групп <em>News&nbsp;Readers</em> и <em>Wiki&nbsp;Reader</em> (записям, DN которых указан в атрибуте <code>owner</owner> записей этих групп) право на добавление/удаление членов этих групп:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {0}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {0}to dn.base="cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru" attrs=roleOccupant</code>
+<code>  by dnattr=roleOccupant selfwrite</code>
+<code>  by dnattr=owner write</code>
+<code>  by * break</code>
+<code>-</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member</code>
+<code>  by dnattr=member selfwrite</code>
+<code>  by dnattr=owner write</code>
+<code>  by * break</code>
+</pre>
+
+<p>Интересующие нас условия <code>by</code> описаны в строках 9 и 18 данного LDIF-файла. Они достаточно очевидны и в дополнительных разъяснениях не нуждаются. Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D cn=config -W -f ./111-modify_acl_8.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config '(olcAccess=*)' olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to dn.base="cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru" attrs=roleOccupant by dnattr=roleOccupant selfwrite by dnattr=owner write by * break
+olcAccess: {1}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member by dnattr=member selfwrite by dnattr=owner write by * break
+olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write by anonymous auth by * none
+olcAccess: {3}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description by self write by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write by * none
+olcAccess: {4}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write by * read
+</pre>
+
+<p>Протестируем полученные ACL. Владельцем обеих групп у нас является пользователь <em>sidorov</em>. Попробуем от его имени добавить другого пользователя в члены этих групп:</p>
+<pre class="list">
+<code>dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: uid=zhukova,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: roleOccupant</code>
+<code>roleOccupant: uid=zhukova,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Применим изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -D uid=sidorov,ou=People,dc=mycompany,dc=ru -w sidorovPassword -f ./017-add_zhukova_to_readers_groups.ldif</strong>
+modifying entry "cn=News Readers,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(cn=*Reader*)'</strong>
+dn: cn=News Readers,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+cn: News Readers
+member: cn=dummy_member
+member: uid=zhukova,ou=People,dc=mycompany,dc=ru
+owner: uid=sidorov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Wiki Reader
+owner: uid=sidorov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=zhukova,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Тест успешно пройден, наше условие работает. Остаётся добавить, что конструкцию <code>dnattr</code> можно использовать с любыми атрибутами с <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксисом DN</a> (например, <code>manager</code> или <code>secretary</code>), для предоставления прав записям, DN которых перечислены в этих атрибутах, на доступ различного уровня к абсолютно любым записям каталога (а не только записям-группам).</p>
+
+<h2 id="summary">Итоговые настройки</h2>
+<p>В ходе этого урока мы познакомились с различными вариантами групповых условий в ACL OpenLDAP, в том числе с использованием наборов для работы с "вложенными" группами. Кроме того, мы рассмотрели специальную конструкцию <code>dnattr</code>, позволяющую предоставлять права на доступ в зависимости от содержимого записей каталога. Наконец, мы рассмотрели разные варианты настройки наложения <code>refint</code>. Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так (для удобства чтения ACL мы разбили их вывод на несколько строк):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /data/openldap-experiments/diving/var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to dn.base="cn=Wiki Reader,ou=Roles,dc=mycompany,dc=ru" attrs=roleOccupant
+  by dnattr=roleOccupant selfwrite
+  by dnattr=owner write
+  by * break
+olcAccess: {1}to dn.base="cn=News Readers,ou=Groups,dc=mycompany,dc=ru" attrs=member
+  by dnattr=member selfwrite
+  by dnattr=owner write
+  by * break
+olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=userPassword
+  by self write by group.exact="cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru" write
+  by group/organizationalRole/roleOccupant.exact="cn=SysAdmin,ou=Roles,dc=mycompany,dc=ru" write
+  by anonymous auth
+  by * none
+olcAccess: {3}to dn.regex="^uid=[^,]+,ou=People,(dc=[^,]+,dc=[^,]+)$" attrs=telephoneNumber,description
+  by self write
+  by group.expand="cn=OpenLDAP Operators,ou=Groups,$1" write
+  by set.expand="[cn=Developer,ou=Roles,$1]/roleOccupant* & user" write
+  by * none
+olcAccess: {4}to *
+  by self write
+  by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/member* & user" write
+  by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+
+dn: olcOverlay={0}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcRefintConfig
+olcOverlay: {0}refint
+olcRefintAttribute: member
+olcRefintNothing: cn=dummy_member
+
+dn: olcOverlay={1}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcRefintConfig
+olcOverlay: {1}refint
+olcRefintAttribute: roleOccupant
+olcRefintAttribute: owner
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: групповые условия в ACL и наложение refint</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;8 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
