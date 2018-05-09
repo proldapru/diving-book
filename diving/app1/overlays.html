@@ -1,0 +1,37 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Приложение 1</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 1</a> > Конфигурация наложений</p>
+<h1>Приложение 1: Соответствие директив конфигурационного файла slapd.conf атрибутам динамической конфигурации cn=config</h1>
+<h2>Конфигурация наложений</h2>
+<h3 id="memberof">Наложение memberof</h3>
+<p>Man-страница наложения: <a href="//pro-ldap.ru/tr/man/slapo-memberof.5.html">slapo-memberof</a>. Объектный класс наложения: <code>olcMemberOf</code>. При подключении модуля <code>memberof</code> в каталоге становится доступен операционный атрибут <code>memberOf</code> (<a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксис DN</a>), используемый по умолчанию наложением для поддержания сведений об обратном членстве в группах.</p>
+<div class="pltab"><table>
+<tr><th>Директива slapd.conf</th><th>Атрибут cn=config</th><th>Синтаксис</th><th>Значения</th><th>Примечание</th></tr>
+<tr><td>memberof-group-oc</td><td>olcMemberOfGroupOC</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Валидное имя объектного класса, по умолчанию&thinsp;&mdash;&thinsp;groupOfNames</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-member-ad</td><td>olcMemberOfMemberAD</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Валидное имя атрибута с синтаксисом DN, по умолчанию&thinsp;&mdash;&thinsp;member</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-memberof-ad</td><td>olcMemberOfMemberOfAD</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Валидное имя атрибута с синтаксисом DN, по умолчанию&thinsp;&mdash;&thinsp;memberOf</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-dn</td><td>olcMemberOfDN</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">DN</a></td><td>Правильно сформированное DN, по умолчанию совпадает с olcRootDN базы данных</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-dangling</td><td>olcMemberOfDangling</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Один из вариантов: ignore, drop или error, по умолчанию&thinsp;&mdash;&thinsp;ignore</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-dangling-error</td><td>olcMemberOfDanglingError</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Числовой код или строковое обозначение ошибки согласно <a href="//pro-ldap.ru/tr/rfc/rfc4511.html#appendix-A.2">RFC 4511</a>, по умолчанию&thinsp;&mdash;&thinsp;19 (constraintViolation)</td><td>Ограничение: SINGLE-VALUE</td></tr>
+<tr><td>memberof-refint</td><td>olcMemberOfRefInt</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.3">Boolean</a></td><td>TRUE или FALSE, по умолчанию&thinsp;&mdash;&thinsp;FALSE</td><td>Ограничение: SINGLE-VALUE</td></tr>
+</table></div>
+
+<h3 id="refint">Наложение refint</h3>
+<p>Man-страница наложения: <a href="//pro-ldap.ru/tr/man/slapo-refint.5.html">slapo-refint</a>. Объектный класс наложения: <code>olcRefintConfig</code>.</p>
+<div class="pltab"><table>
+<tr><th>Директива slapd.conf</th><th>Атрибут cn=config</th><th>Синтаксис</th><th>Значения</th><th>Примечание</th></tr>
+<tr><td>refint_attributes</td><td>olcRefintAttribute</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Валидное имя атрибута с синтаксисом DN</td><td>Если требуется отслеживать целостность значений нескольких атрибутов, каждый их них указывается отдельным значением olcRefintAttribute</td></tr>
+<tr><td>refint_nothing</td><td>olcRefintNothing</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">DN</a></td><td>Правильно сформированное DN</td><td></td></tr>
+<tr><td>refint_modifiersname</td><td>olcRefintModifiersName</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">DN</a></td><td>Правильно сформированное DN, по умолчанию&thinsp;&mdash;&thinsp;cn=Referential Integrity Overlay</td><td></td></tr>
+</table></div>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 1</a> > Конфигурация наложений</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
