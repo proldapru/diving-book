@@ -1,0 +1,673 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: наложение memberof</p>
+<h1>Статические группы: наложение memberof</h1>
+<h3>Содержание</h3>
+<div class="contents">
+<ul>
+<li><a href="#abstract">Наложение memberof</a><ul>
+  <li><a href="#syntax_dn_limitations">Важное замечание по атрибутам с синтаксисом DN</a></li>
+  <li><a href="#memberof_overlay_limitations">Важные замечания по использованию наложения memberof</a></li>
+</ul></li>
+<li><a href="#basic">Базовые настройки наложения memberof</a></li>
+<li><a href="#acl_filter">Фильтр отбора записей в ACL OpenLDAP</a></li>
+<li><a href="#integrity">Поддержание целостности содержимого каталога</a><ul>
+  <li><a href="#integrity_refint">Поддержание целостности атрибутов членства в группе</a></li>
+  <li><a href="#integrity_dangling">Обработка попыток добавления в группу несуществующих членов</a></li>
+</ul></li>
+<li><a href="#summary">Итоговые настройки</a></li>
+</ul>
+</div>
+
+<h2 id="abstract">Наложение memberof</h2>
+<p>Как сказано в <a href="//pro-ldap.ru/tr/man/slapo-memberof.5.html">man-странице наложения</a>, оно предназначено для того, чтобы автоматически поддерживать обратное членство в группе. На практике это означает, что при использовании этого наложения между группой и её записями-членами создаётся взаимосвязь: при добавлении DN записи в качестве члена в некоторую группу в саму эту запись добавляется атрибут (по умолчанию это операционный атрибут <code>memberOf</code>), содержащий в качестве значения DN записи-группы. При удалении же DN записи из членов группы из самой записи будет удалён атрибут, значение которого содержит DN записи-группы.</p>
+<p>Такая взаимосвязь позволяет администраторам строить довольно удобные фильтры для поиска записей пользователей, принадлежащих какой либо группе, например:</p>
+<pre class="list">(&(uid=*)(memberOf=cn=MyPrettyGroup,ou=Groups,dc=mycompany,dc=ru))</pre>
+<p>Такие фильтры часто применяются для настройки библиотек/приложений, осуществляющих аутентификацию/авторизацию пользователей с использованием каталога. В данном случае они позволяют на ранней стадии выполнить отбор записей пользователей, которым разрешено выполнять аутентификацию, на основе принадлежности той или иной группе. Кроме того, подобные фильтры можно использовать и при настройке самого OpenLDAP, чтобы организовать взаимодействие между статическими и динамическими группами (списками).</p>
+
+<p>Выглядит всё просто и удобно. Но есть нюансы, касающиеся как построения фильтров, так и использования самого наложения <code>memberof</code>.</p>
+
+<h3 id="syntax_dn_limitations">Важное замечание по атрибутам с синтаксисом DN</h3>
+<p>Администраторы часто склонны переоценивать возможности построения фильтров на основе атрибутов с синтаксисом DN. Неоднократно приходилось наблюдать попытки составить фильтры типа:</p>
+<pre class="list">(&(uid=*)(memberOf=cn=*,ou=Groups,dc=mycompany,dc=ru))</pre>
+<p>Или даже такие:</p>
+<pre class="list">(&(uid=*)(memberOf=cn=*Group,ou=Groups,dc=mycompany,dc=ru))</pre>
+<p>К сожалению, такие фильтры работать (возвращать результаты) не будут. А всё потому, что атрибут <code>memberOf</code> имеет <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксис DN</a>, для которого в RFC 4517 определено единственное <a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-4.2.15">правило соответствия distinguishedNameMatch</a>, которое является правилом соответствия типа equality, то есть сравнение с использованием такого правила вернёт истину только в случае <span style="text-decoration:underline">полного совпадения</span> значения атрибута со значением в правой части AVA фильтра. Поэтому единственный приемлемый вариант фильтра будет таков:</p>
+<pre class="list">(&(uid=*)(memberOf=cn=MyPrettyGroup,ou=Groups,dc=mycompany,dc=ru))</pre>
+<p>Справедливости ради следует отметить, что для атрибутов с синтаксисом DN (как и для всех остальных) также работают фильтры типа present:</p>
+<pre class="list">(&(uid=*)(memberOf=*))</pre>
+<p>В данном случае будут отобраны записи каталога, в которых имеются сразу и атрибуты <code>uid</code>, и атрибуты <code>memberOf</code>. Но практическая ценность подобного рода фильтров невысока.</p>
+<p>Разумеется, эти же ограничения распространяются и на любые другие атрибуты с синтаксисом DN (<code>member</code>, <code>manager</code>, <code>secretary</code>, <code>seeAlso</code> и все остальные).</p>
+
+<h3 id="memberof_overlay_limitations">Важные замечания по использованию наложения memberof</h3>
+<p>1. Наложение  работает непосредственно при изменении записей-групп. То есть, если мы попытаемся применить данное наложение к рабочему каталогу, в котором уже имеются записи пользователей и групп, то для этих уже имеющихся записей наложение не сработает и искомых атрибутов обратного членства в группе мы не получим. Поэтому лучше всего продумывать и внедрять настройки <code>memberof</code> сразу на этапе проектирования каталога. Но если момент уже упущен и мы настраиваем <code>memberof</code> на рабочем каталоге, то придётся производить дополнительные манипуляции с записями-группами: либо полностью их удалять и добавлять заново, либо удалять и вновь добавлять атрибуты членства этих записей-групп.</p>
+<p>2. Результаты работы наложения <code>memberof</code> локальны для сервера, на котором оно настроено, и не реплицируются. Для корректной работы в реплицируемом окружении необходимо поддерживать аналогичные настройки наложения на всех серверах, участвующих в репликации, а также следить за тем, чтобы до завершения изменения настроек на всех репликах модификации записей-групп в рабочем каталоге не происходило (во избежание рассинхронизации содержимого каталога на разных репликах). Хорошим решением в данном случае будет перевод рабочего каталога в режим "только чтение" на всех серверах-поставщиках репликации до окончания перенастройки.</p>
+<p>3. В силу того, что все <a href="../app1/overlays.html#memberof">атрибуты конфигурации наложения memberof</a> могут иметь только одно значение, можно настроить один экземпляр наложения на отслеживание изменений записей-групп, сформированных только на одном конкретном объектном классе. Если же записи-группы в каталоге строятся на разных объектных классах и нам необходимо отслеживать обратное членство для всех таких групп, придётся подключать и настраивать для одной базы данных соответствующее количество наложений <code>memberof</code>.</p>
+
+<h2 id="basic">Базовые настройки наложения memberof</h2>
+<p>Перейдём непосредственно к настройкам наложения. Начинать работу с каталогом мы вновь будем с <a href="initial_position.html">исходного положения</a>.</p>
+<p>Предположим, в нашей компании есть отделы разработки и дизайна, в каталоге они будут представлены группами <em>cn=Developers,ou=Groups,dc=mycompany,dc=ru</em> и <em>cn=Designers,ou=Groups,dc=mycompany,dc=ru</em> (объектный класс <code>groupOfNames</code>). Для начальников этих подразделений предусмотрены соответствующие роли <em>cn=Chief&nbsp;of&nbsp;Developers,ou=Roles,dc=mycompany,dc=ru</em> и <em>cn=Chief&nbsp;of&nbsp;Designers,ou=Roles,dc=mycompany,dc=ru</em> (объектный класс <code>organizationalRole</code>). Всё вместе это выглядит следующим образом (файл <code>002-add_groups_and_roles.ldif</code>):</p>
+<pre class="list" id="ldif_group">
+<code class="c"># Группа "Разработчики"</code>
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>cn: Developers</code>
+<code>member: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>member: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Группа "Дизайнеры"</code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>cn: Designers</code>
+<code>member: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>member: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Контейнер для ролей</code>
+<code>dn: ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: Roles</code>
+<code></code>
+<code class="c"># Роль "Начальник отдела разработки"</code>
+<code>dn: cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>cn: Chief of Developers</code>
+<code>roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code class="c"># Роль "Начальник отдела дизайна"</code>
+<code>dn: cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>cn: Chief Of Designers</code>
+<code>roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Для удобства настройки библиотек и приложений, взаимодействующих с нашим каталогом, мы решили использовать в учётных записях пользователей атрибут обратного членства в группе <code>memberOf</code>, и для его автоматического поддержания в каталоге применить наложение <code>memberof</code>. Как было <a href="#memberof_overlay_limitations">сказано выше</a>, наложение должно быть настроено <strong>до</strong> того, как в каталог будут добавлены соответствующие группы. Чтобы обезопасить себя от случайного занесения кем-то из администраторов/пользователей записей-групп, на время перенастройки OpenLDAP переведём рабочий каталог в состояние "только для чтения". Для этого создадим LDIF-файл такого содержания:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcReadOnly</code>
+<code>olcReadOnly: TRUE</code>
+</pre>
+
+<p>Применим его и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W  -f ./201-set_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s base olcReadOnly</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcReadOnly: TRUE
+</pre>
+
+<p class="note">Во избежание рассинхронизации содержимого каталога в реплицируемом окружении, перед перенастройкой OpenLDAP необходимо перевести в режим "только для чтения" каждый сервер-поставщик репликации (то есть выполнить на них те же манипуляции).</p>
+
+<p>На всякий случай проверим, что рабочий каталог защищён от записи. Попытаемся добавить наши группы:</p>
+
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_groups_and_roles.ldif</strong>
+Enter LDAP Password: 
+adding new entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+ldap_add: Server is unwilling to perform (53)
+	additional info: operation restricted
+</pre>
+
+<p>Всё в порядке, можно приступать к настройкам. Для начала подгрузим динамический модуль наложения <code>memberof</code>:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: memberof.la</code>
+</pre>
+
+<p>Применим измения и проверим:</p>
+<pre class="sh">
+$ <strong>$ ldapmodify -x -D cn=config -W  -f ./101-add_memberof_module.ldif</strong>
+Enter LDAP Password: 
+modifying entry "cn=module{0},cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b cn=module{0},cn=config olcModuleLoad</strong>
+Enter LDAP Password: 
+dn: cn=module{0},cn=config
+olcModuleLoad: {0}back_mdb.la
+olcModuleLoad: {1}memberof.la
+</pre>
+
+<p>Перейдём непосредственно к настройкам. Поскольку у нас планируется отслеживать членство в группах, построенных на двух разных объектных классах (<code>groupOfNames</code> и <code>organizationalRole</code>), то нам понадобится настроить два экземпляра наложения <code>memberof</code>. У каждого <a href="../app1/overlays.html#memberof">атрибута настройки данного наложения</a> есть разумное значение по умолчанию, что позволяет не указывать лишние атрибуты. Для объектного класса <code>groupOfNames</code> мы можем вообще ничего не указывать: по умолчанию наложение срабатывает на записи именно с этим классом и его атрибутом членства <code>member</code>. А чтобы наложение сработало на объектный класс <code>organizationalRole</code>, мы должны указать это явно: сам класс в значении атрибута <code>olcMemberOfGroupOC</code>, а его атрибут членства <code>roleOccupant</code>&thinsp;&mdash;&thinsp;в значении атрибута <code>olcMemberOfMemberAD</code>. Заодно, в качестве примера, явно укажем атрибут обратного членства в группе (тот самый <code>memberOf</code>) в значении атрибута <code>olcMemberOfMemberOfAD</code>. Итоговый LDIF для настройки двух экземпляров наложения:</p>
+<pre class="list">
+<code>dn: olcOverlay=memberof,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcMemberOf</code>
+<code>olcOverlay: memberof</code>
+<code></code>
+<code>dn: olcOverlay=memberof,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcMemberOf</code>
+<code>olcOverlay: memberof</code>
+<code>olcMemberOfGroupOC: organizationalRole</code>
+<code>olcMemberOfMemberAD: roleOccupant</code>
+<code>olcMemberOfMemberOfAD: memberOf</code>
+</pre>
+
+<p>Применим его и проверим:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=config -W  -f ./102-add_2_memberof_overlays.ldif</strong>
+Enter LDAP Password: 
+adding new entry "olcOverlay=memberof,olcDatabase={1}mdb,cn=config"
+
+adding new entry "olcOverlay=memberof,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config -s one</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+
+dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {1}memberof
+olcMemberOfGroupOC: organizationalRole
+olcMemberOfMemberAD: roleOccupant
+olcMemberOfMemberOfAD: memberOf
+</pre>
+
+<p>На данном этапе настройки завершены, поэтому мы можем снять защиту от записи с рабочего каталога:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcReadOnly</code>
+<code>olcReadOnly: FALSE</code>
+</pre>
+
+<p>Применим наш LDIF и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W  -f ./202-unset_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s base olcReadOnly</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcReadOnly: FALSE
+</pre>
+
+<p>Наконец, добавим <a href="#ldif_group">анонсированные в самом начале записи группы</a>:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_groups_and_roles.ldif</strong>
+Enter LDAP Password: 
+adding new entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "ou=Roles,dc=mycompany,dc=ru"
+
+adding new entry "cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru"
+
+adding new entry "cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru"
+</pre>
+
+<p>Убедимся, что наложение <code>memberof</code> сработало:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(member=*)(roleOccupant=*)(memberof=*))' member roleOccupant memberof</strong>
+dn: uid=antonova,ou=People,dc=mycompany,dc=ru
+memberOf: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+memberOf: cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru
+
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+memberOf: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+memberOf: cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru
+
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+memberOf: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+memberOf: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+member: uid=ivanov,ou=People,dc=mycompany,dc=ru
+member: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+member: uid=sidorov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Итак, группы добавлены, а обратное членство в этих группах корректно отслеживается наложением <code>memberof</code>. Напомним, что атрибут <code>memberOf</code> является операционным и по умолчанию не выводится. Вывод его нужно запрашивать явно:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b uid=ivanov,ou=People,dc=mycompany,dc=ru '*' memberOf</strong>
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: ivanov
+cn: Ivan Ivanov
+sn: Ivanov
+memberOf: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+memberOf: cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru
+</pre>
+
+<p>Прежде чем перейти к расширенным настройкам наложения <code>memberof</code>, отвлечёмся ненадолго на один интересный вариант ACL OpenLDAP.</p>
+
+<h2 id="acl_filter">Фильтр отбора записей в ACL OpenLDAP</h2>
+<p>Полный вариант условия <code>to</code> ACL подразумевает, помимо критериев <code>dn</code> (доступ к записям, начиная с указанной, и в определённом диапазоне) и <code>attrs</code> (доступ к указанным атрибутам), ещё и критерий <code>filter</code>. В нём может быть задан любой валидный LDAP-фильтр, который будет использоваться для дополнительного отбора записей среди тех, которые удовлетворили критерию <code>dn</code>. Если критерий <code>filter</code> не указан, неявно подразумевается использование фильтра <code>(objectClass=*)</code>.</p>
+
+<p>Мы можем использовать данный критерий для решения такой практической задачи: предоставить доступ начальникам отделов на правку определённых атрибутов (например, <code>telephoneNumber</code> и <code>description</code>) в учётных записях сотрудников своих подразделений. То есть сотрудник, исполняющий роль <em>Chief of Developers</em>, должен получить доступ на правку только учёток пользователей, являющихся членами группы <em>Developers</em>, а сотрудник, исполняющий роль <em>Chief of Designers</em>, должен получить доступ на правку только учёток членов группы <em>Designers</em>. В виде ACL это можно описать следующим образом:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru"</code>
+<code>  filter=(memberOf=cn=Developers,ou=Groups,dc=mycompany,dc=ru)</code>
+<code>  attrs=telephoneNumber,description</code>
+<code>    by self write</code>
+<code>    by group/organizationalRole/roleOccupant.exact="cn=Chief Of Developers,ou=Roles,dc=mycompany,dc=ru" write</code>
+<code>    by * read</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru"</code>
+<code>  filter=(memberOf=cn=Designers,ou=Groups,dc=mycompany,dc=ru)</code>
+<code>  attrs=telephoneNumber,description</code>
+<code>    by self write</code>
+<code>    by group/organizationalRole/roleOccupant.exact="cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru" write</code>
+<code>    by * read</code>
+</pre>
+
+<p>Эти два ACL аналогичны по структуре, поэтому подробнее рассмотрим первый из них. В нём доступ предоставляется к дочерним записям ветки каталога <em>ou=People,dc=mycompany,dc=ru</em>, в которой находятся учётные записи пользователей (строка 4). Согласно фильтру в строке 5, из всех записей в ветке <em>ou=People,dc=mycompany,dc=ru</em> доступ будет предоставляться лишь к тем, в которых атрибут <code>memberOf</code> имеет значение <em>cn=Developers,ou=Groups,dc=mycompany,dc=ru</em> (члены группы <em>Developers</em>). Наконец, согласно строке 6, в полученном наборе записей доступ будет предоставлен только к атрибутам <code>telephoneNumber</code> и <code>description</code>. Далее следуют условия <code>by</code> (кому и какой уровень доступа будет предоставлен). Условия в строках 7 и 9 стандартны, а в строке 8 определяется полноформатное групповое условие ACL, которое мы подробно разбирали <a href="static1.html#acl_group_conditions">ранее</a>. Согласно этому условию, доступ на запись к атрибутам, указанным в условии <code>to</code>, предоставляется членам группы <em>Chief Of Developers</em> (что и обговаривалось при постановке задачи).</p>
+
+<p>Применим наши изменения и посмотрим итоговый набор ACL для нашего рабочего каталога:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W  -f ./103-add_filter_acls.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" filter=(memberOf=cn=Developers,ou=Groups,dc=mycompany,dc=ru) attrs=telephoneNumber,description by self write by group/organizationalRole/roleOccupant.exact="cn=Chief Of Developers,ou=Roles,dc=mycompany,dc=ru" write by * read
+olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru" filter=(memberOf=cn=Designers,ou=Groups,dc=mycompany,dc=ru) attrs=telephoneNumber,description by self write by group/organizationalRole/roleOccupant.exact="cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru" write by * read
+olcAccess: {3}to * by self write by * read
+</pre>
+
+<p>Протестируем работу ACL утилитой slapacl. Проверим, получит ли пользователь <em>ivanov</em> (начальник отдела разработки) доступ к атрибутам <code>telephoneNumber</code>, <code>description</code>, а также <code>cn</code> пользователей <em>petrov</em> (сотрудника этого же отдела) и <em>sidorov</em> (который сотрудником этого отдела не является):</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru telephoneNumber description cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+telephoneNumber: write(=wrscxd)
+description: write(=wrscxd)
+cn: read(=rscxd)
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=sidorov,ou=People,dc=mycompany,dc=ru telephoneNumber description cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+telephoneNumber: read(=rscxd)
+description: read(=rscxd)
+cn: read(=rscxd)
+</pre>
+
+<p class="note">Утилите <code>slapacl</code> для работы требуется считать списки контроля доступа из конфигурационной директории <code>slapd.d</code>, поэтому мы запускаем её с правами пользователя <code>root</code>.</p>
+
+<p>Наши тесты отработали, как ожидалось: начальник отдела может поменять атрибуты <code>telephoneNumber</code> и <code>description</code> (но не атрибут <code>cn</code>) в учётках пользователей своего отдела, а в остальных учётках&thinsp;&mdash;&thinsp;нет.<p>
+
+<p>Теперь проведём натурные испытания. Попытаемся изменить те самые атрибуты в записях пользователей <em>petrov</em> и <em>sidorov</em>:</p>
+<pre class="list">
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: telephoneNumber</code>
+<code>telephoneNumber: 111-22-33</code>
+<code>-</code>
+<code>add: description</code>
+<code>description: Cool Developer</code>
+<code></code>
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: telephoneNumber</code>
+<code>telephoneNumber: 222-33-44</code>
+<code>-</code>
+<code>add: description</code>
+<code>description: Cool Designer</code>
+</pre>
+
+<p>Выполним изменения от имени пользователя <em>ivanov</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./003-test_add_attrs.ldif</strong>
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(uid=petrov)(uid=sidorov))'</strong>
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: petrov
+cn: Petr Petrov
+sn: Petrov
+telephoneNumber: 111-22-33
+description: Cool Developer
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: sidorov
+cn: Sidor Sidorov
+sn: Sidorov
+</pre>
+
+<p>Запись пользователя <em>petrov</em> успешно изменена, а на модификацию записи пользователя <em>sidorov</em> прав не хватило. Наши ACL работают!</p>
+
+<p>А теперь попытаемся произвести те же изменения от имени пользователя <em>antonova</em> (начальник отдела дизайна):</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -c -f ./003-test_add_attrs.ldif</strong>
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(uid=petrov)(uid=sidorov))'</strong>
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: petrov
+cn: Petr Petrov
+sn: Petrov
+telephoneNumber: 111-22-33
+description: Cool Developer
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+objectClass: person
+objectClass: uidObject
+uid: sidorov
+cn: Sidor Sidorov
+sn: Sidorov
+telephoneNumber: 222-33-44
+description: Cool Designer
+</pre>
+
+<p class="note">Опция <code>-c</code> программы <code>ldapmodify</code> говорит о том, что при возникновении ошибок следует не завершать работу, а переходить к обработке следующей операции модификации.</p>
+
+<p>Всё работает, как ожидалось. Можем переходить к дальнейшим настройкам наложения <code>memberof</code>.</p>
+
+<h2 id="integrity">Поддержание целостности содержимого каталога</h2>
+<p>У наложения <code>memberof</code> есть два разных механизма поддержания целостности содержимого каталога. Работа первого из них в целом аналогична работе <a href="static1.html#refint">наложения refint</a> (с некоторыми ограничениями), и заключается в обеспечении целостности "ссылочных" атрибутов членства в группе для записей-групп. То есть при удалении/перемещении/переименовании записей-членов группы, значения атрибутов членства в записи-группе могут автоматически меняться соответствующим образом.</p>
+
+<p>Второй механизм&thinsp;&mdash;&thinsp;это, если так можно выразится, <code>refint</code> наоборот, то есть попытка обработать добавление в запись-группу в качестве члена DN несуществующей записи. В такой ситуации наложение <code>memberof</code>, в зависимости от настроек, может вести себя по-разному. Рассмотрим оба этих механизма подробнее.</p>
+
+<h3 id="integrity_refint">Поддержание целостности атрибутов членства в группе</h3>
+<p>За обработку целостности "ссылочных" атрибутов в наложении <code>memberof</code> отвечает всего один булевый атрибут конфигурации: <code>olcMemberOfRefInt</code>. То есть её можно либо включить, либо выключить, и по умолчанию она выключена. Если же её включить, то наложение будет следить за целостностью значений атрибута членства в группе, указанного в атрибуте конфигурации <code>olcMemberOfMemberAD</code>, аналогично тому, как это делает <a href="static1.html#refint">наложение refint</a>. Есть, правда, небольшой нюанс, касающийся известной проблемы соблюдения требований схемы данных для объектных классов <code>groupOfNames</code> и <code>groupOfUniqueNames</code>, а именно обязательного наличия в записях-группах с этими классами хотя бы одного члена. В наложении <code>memberof</code> (в отличие от <code>refinf</code>) обработка ситуации удаления последнего члена из группы не предусмотрена, и при удалении записи пользователя, DN которой будет единственным значением атрибута членства в группе, наложение <code>memberof</code> "молча" позволит удалить запись пользователя, при этом DN этой записи так и останется последним значением атрибута членства в записи-группе, и будет ссылаться в никуда, нарушая целостность каталога. К счастью, эта проблема имеет очень простое компромиссное решение: в запись-группу заранее добавляются заведомо фиктивные члены, которые в любом случае останутся последними членами при удалении последнего реального члена:</p>
+<pre class="list" id="ldif_dummy_member">
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: cn=dummy_member</code>
+<code></code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: cn=dummy_member</code>
+</pre>
+<p>Внесём изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./004-add_dummy_members.ldif</strong>
+Enter LDAP Password: 
+modifying entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b ou=Groups,dc=mycompany,dc=ru 'member=*' member</strong>
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+member: uid=sidorov,ou=People,dc=mycompany,dc=ru
+member: cn=dummy_member
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+member: uid=ivanov,ou=People,dc=mycompany,dc=ru
+member: uid=petrov,ou=People,dc=mycompany,dc=ru
+member: cn=dummy_member
+</pre>
+
+<p>После того, как мы себя "обезопасили", можно включить отслеживание целостности атрибутов членства в группе силами наложения <code>memberof</code>:</p>
+<pre class="list">
+<code>dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcMemberOfRefInt</code>
+<code>olcMemberOfRefInt: TRUE</code>
+<code></code>
+<code>dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcMemberOfRefInt</code>
+<code>olcMemberOfRefInt: TRUE</code>
+</pre>
+
+<p>Применим изменения и проверим получившиеся записи; на время изменения настроек наложения переведём рабочий каталог в режим "только для чтения":</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./201-set_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapmodify -x -D cn=config -W -f ./104-memberof_add_refint.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config"
+
+modifying entry "olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config objectClass=olcMemberOf</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+olcMemberOfRefInt: TRUE
+
+dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {1}memberof
+olcMemberOfGroupOC: organizationalRole
+olcMemberOfMemberAD: roleOccupant
+olcMemberOfMemberOfAD: memberOf
+olcMemberOfRefInt: TRUE
+
+$ <strong>ldapmodify -x -D cn=config -W -f ./202-unset_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+</pre>
+
+<p>Протестируем работу наложения в новом режиме. Предположим, что Ваня Иванов уволился из компании, а Тоня Антонова вышла замуж и сменила фамилию. LDIF для внесения изменений в каталог:</p>
+<pre class="list">
+<code class="c"># Удаление записи ivanov</code>
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: delete</code>
+<code></code>
+<code class="c"># Переименование записи antonova</code>
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modrdn</code>
+<code>newrdn: uid=zhukova</code>
+<code>deleteoldrdn: 1</code>
+<code></code>
+<code class="c"># Модификация записи zhukova</code>
+<code>dn: uid=zhukova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: cn</code>
+<code>cn: Antonina Zhukova</code>
+<code>-</code>
+<code>replace: sn</code>
+<code>sn: Zhukova</code>
+<code>-</code>
+<code>replace: userPassword</code>
+<code>userPassword: zhukovaPassword</code>
+</pre>
+
+<p>Применим изменения и проверим, что получилось с нашими группами и ролями:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./005-test_refint.ldif</strong>
+Enter LDAP Password: 
+deleting entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+
+modifying rdn of entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=zhukova,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(objectClass=groupOfNames)(objectClass=organizationalRole))' member roleOccupant</strong>
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+member: uid=petrov,ou=People,dc=mycompany,dc=ru
+member: cn=dummy_member
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+member: uid=sidorov,ou=People,dc=mycompany,dc=ru
+member: cn=dummy_member
+member: uid=zhukova,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Chief of Developers,ou=Roles,dc=mycompany,dc=ru
+
+dn: cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru
+roleOccupant: uid=zhukova,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>При удалении из каталога записи <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em> были удалены соответствующие значения атрибутов членства из группы <em>Developers</em> и роли <em>Chief of Developers</em>. При переименовании записи <em>uid=antonova,ou=People,dc=mycompany,dc=ru</em> были изменены соответствующие значения атрибутов членства в группе <em>Designers</em> и роли <em>Chief of Designers</em>. Наложение <code>memberof</code> с настройками поддержания целостности атрибутов членства в группе работает, как и ожидалось.</p>
+
+<p>Вывод: если нам необходимо отслеживать целостность атрибутов членства в группе и у нас уже включено наложение <code>memberof</code>, добавлять в стек наложений ещё и наложение <code>refint</code> нет смысла&thinsp;&mdash;&thinsp;<code>memberof</code> прекрасно справляется с этой задачей самостоятельно. Если же нам нужно дополнительно отслеживать целостность и других "ссылочных" атрибутов (<code>owner</code>, <code>meneger</code>, <code>seeAlso</code> и т.п.), то без <a href="static1.html#refint">включения наложения refint</a> не обойтись.</p>
+
+<h3 id="integrity_dangling">Обработка попыток добавления в группу несуществующих членов</h3>
+<p>Предположим, мы хотим добавить в качестве члена в группу <em>Developers</em> DN записи, которой нет в нашем каталоге:</p>
+<pre class="list" id="ldif_nonexistent_member">
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: member</code>
+<code>member: uid=volkov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Как в этом случае поведёт себя наложение <code>memberof</code>? Это зависит от настройки параметра обработки "висячих" записей, который задаётся значением атрибута <code>olcMemberOfDangling</code> наложения. У этого параметра три фиксированных значения: <code>ignore</code>, <code>drop</code> и <code>error</code>. В варианте <code>ignore</code> (используется по умолчанию) несуществующий член "молча" (без выдачи какого-либо сообщения) добавится в запись-группу. Поскольку этот вариант используется по умолчанию, мы смогли на предыдущем этапе беспрепятственно <a href="#ldif_dummy_member">добавить в наши группы</a> членов <em>cn=dummy_member</em>. В варианте <code>drop</code> при попытке добавления несуществующего члена наложение "молча" отбросит эту операцию, то есть член не будет добавлен, но и ошибки сгенерировано не будет. Наконец, в варианте <code>error</code> попытка добавления несуществующего члена приведёт к аварийному завершению операции с выдачей сообщения об ошибке. По умолчанию это будет ошибка с кодом 19 (<code>constraintViolation<c/ode>), но её можно переопределить, задав числовой код или строковое обозначение ошибки из <a href="//http://pro-ldap.ru/tr/rfc/rfc4511.html#appendix-A.2">приложения A.2 RFC 4511</a> в качестве значения атрибута <code>olcMemberOfDanglingError</code>.</p>
+
+<p>Какой вариант данной настройки использовать для того или иного каталога, зависит от задач, которые ставятся перед этим каталогом. В качестве примера мы приведём самый строгий вариант настройки: <code>error</code>, как максимально обеспечивающий поддержание целостности содержимого каталога. Заодно, опять же для примера, при попытке добавления несуществующего члена мы будем выдавать ошибку 53 (<code>unwillingToPerform</code>). LDIF для внесения изменений в настройки наложений <code>memberof</code> будет выглядеть следующим образом:</p>
+
+<pre class="list">
+<code>dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcMemberOfDangling</code>
+<code>olcMemberOfDangling: error</code>
+<code>-</code>
+<code>add: olcMemberOfDanglingError</code>
+<code>olcMemberOfDanglingError: 53</code>
+<code></code>
+<code>dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcMemberOfDangling</code>
+<code>olcMemberOfDangling: error</code>
+<code>-</code>
+<code>add: olcMemberOfDanglingError</code>
+<code>olcMemberOfDanglingError: unwillingToPerform</code>
+</pre>
+
+<p>Обратите внимание на строки 7 и 15 данного LDIF. В качестве значения атрибута <code>olcMemberOfDanglingError</code> указана одна и та же ошибка, только в первый раз в виде кода, а во второй&thinsp;&mdash;&thinsp;в виде строкового обозначения.</p>
+
+<p>Применим изменения и проверим получившиеся записи; на время изменения настроек наложения переведём рабочий каталог в режим "только для чтения":</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./201-set_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapmodify -x -D cn=config -W -f ./105-memberof_add_dangling.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config"
+
+modifying entry "olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config objectClass=olcMemberOf</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+olcMemberOfRefInt: TRUE
+olcMemberOfDangling: error
+olcMemberOfDanglingError: 53
+
+dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {1}memberof
+olcMemberOfGroupOC: organizationalRole
+olcMemberOfMemberAD: roleOccupant
+olcMemberOfMemberOfAD: memberOf
+olcMemberOfRefInt: TRUE
+olcMemberOfDangling: error
+olcMemberOfDanglingError: unwillingToPerform
+
+$ <strong>ldapmodify -x -D cn=config -W -f ./202-unset_readonly.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+</pre>
+
+<p>Протестируем работу наложения в новом режиме. Попытаемся <a href="#ldif_nonexistent_member">добавить несуществующего члена</a> в группу <em>Developers</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./006-test_add_nonexistent_member.ldif</strong>
+Enter LDAP Password: 
+modifying entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+ldap_modify: Server is unwilling to perform (53)
+	additional info: adding non-existing object as group member
+</pre>
+
+<p>Операция завершилась неудачно с выдачей заданной нами ошибки 53. В качестве дополнительной информации сообщается о добавлении несуществующего объекта в члены группы. Наложение <code>memberof</code> работает, как и ожидалось.</p>
+
+<h2 id="summary">Итоговые настройки</h2>
+<p>В ходе этого урока мы познакомились с различными вариантами настройки наложения <code>memberof</code>. Кроме базового функционала поддержания признака обратного членства в группе в записи пользователя, состоящего в этой группе, оно способно также разными способами поддерживать целостность содержимого каталога. Кроме того, мы рассмотрели критерий <code>filter</code> условия <code>to</code> ACL OpenLDAP, с помощью которого можно накладывать дополнительные ограничения при отборе записей, к которым будет применяться правило контроля доступа. В частности, мы рассмотрели фильтрацию записи пользователей по их принадлежности группе с помощью поддерживаемого наложением <code>memberof</code> атрибута <code>memberOf</code>. Наконец, мы рассмотрели пример перевода рабочего каталога в режим "только для чтения" и обратно. Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так (для удобства чтения ACL мы разбили их вывод на несколько строк):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to attrs=userPassword
+    by self write
+    by anonymous auth
+    by * none
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru"
+  filter=(memberOf=cn=Developers,ou=Groups,dc=mycompany,dc=ru)
+  attrs=telephoneNumber,description
+    by self write
+    by group/organizationalRole/roleOccupant.exact="cn=Chief Of Developers,ou=Roles,dc=mycompany,dc=ru" write
+    by * read
+olcAccess: {2}to dn.children="ou=People,dc=mycompany,dc=ru"
+  filter=(memberOf=cn=Designers,ou=Groups,dc=mycompany,dc=ru)
+  attrs=telephoneNumber,description
+    by self write
+    by group/organizationalRole/roleOccupant.exact="cn=Chief Of Designers,ou=Roles,dc=mycompany,dc=ru" write
+    by * read
+olcAccess: {3}to *
+    by self write
+    by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+olcReadOnly: FALSE
+
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+olcMemberOfRefInt: TRUE
+olcMemberOfDangling: error
+olcMemberOfDanglingError: 53
+
+dn: olcOverlay={1}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcMemberOf
+olcOverlay: {1}memberof
+olcMemberOfGroupOC: organizationalRole
+olcMemberOfMemberAD: roleOccupant
+olcMemberOfMemberOfAD: memberOf
+olcMemberOfRefInt: TRUE
+olcMemberOfDangling: error
+olcMemberOfDanglingError: unwillingToPerform
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: наложение memberof</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
