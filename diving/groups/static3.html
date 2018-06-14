@@ -1,0 +1,299 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: POSIX-группы</p>
+<h1>Статические группы: POSIX-группы</h1>
+<h3>Содержание</h3>
+<div class="contents">
+<ul>
+<li><a href="#about_posix_groups">О POSIX-группах</a></li>
+<li><a href="#acl_posix_groups">Разграничение доступа к каталогу OpenLDAP на основе POSIX-групп</a></li>
+<li><a href="#summary">Итоговые настройки</a></li>
+</ul>
+</div>
+
+<h2 id="about_posix_groups">О POSIX-группах</h2>
+<p>Как уже было сказано <a href="index.html">ранее</a>, объекты POSIX-групп в каталоге&thinsp;&mdash;&thinsp;это записи, построенные на объектном классе <code>posixGroup</code>, определённом в <a href="//pro-ldap.ru/tr/rfc/rfc2307.html">RFC 2307</a>. Этот RFC был принят в далёком 1998 году с целью представления в виде записей каталога объектов <em>сетевой информационной системы (NIS)</em> UNIX. Как и в настоящих POSIX-группах NIS, у таких записей имеется числовой идентификатор группы (в обязательном атрибуте <code>gidNumber</code>), а в качестве членов в атрибутах <code>memberUid</code> указываются текстовые имена учётных записей пользователей UNIX:</p>
+<pre class="list">
+dn: cn=Cool Users,ou=Groups,dc=mycompany,dc=ru
+objectClass: posixGroup
+cn: Cool Users
+gidNumber: 10000
+memberUid: ivanov
+memberUid: petrov
+memberUid: sidorov
+memberUid: antonova
+</pre>
+
+<p>Как наследие NIS, объекты POSIX-групп повсеместно использовались во времена расцвета samba3, и до сих пор многие библиотеки систем NSS/PAM, взаимодействующие с каталогами LDAP, по умолчанию работают именно с такими группами.</p>
+
+<p>С точки зрения каталога, объекты POSIX-групп нельзя рассматривать как записи-группы, так как они не дают возможности напрямую сопоставлять значения атрибутов членства с записями-членами группы в каталоге. Они представляют собой записи-списки, в которых перечислены текстовые имена учётных записей пользователей UNIX, а сопоставление членства в группе с реальной записью-членом в каталоге полностью возлагается на клиентское приложение. Именно поэтому с POSIX-группами не работают ориентированные на группы наложения OpenLDAP <a href="static1.html#refint">refint</a> и <a href="static2.html">memberof</a>, их также нельзя использовать в <a href="static1.html#acl_group_conditions">групповых условиях ACL OpenLDAP</a>. Тем не менее, если в каталоге всё же используются POSIX-группы, с помощью механизма наборов в ACL OpenLDAP их также можно задействовать для организации разграничения доступа к содержимому каталога.</p>
+
+<h2 id="acl_posix_groups">Разграничение доступа к каталогу OpenLDAP на основе POSIX-групп</h2>
+<p>Попробуем воссоздать ситуацию, которую мы <a href="static1.html#acl_group_conditions">рассматривали</a> для "обычных" групп каталога: имеются две группы,&thinsp;&mdash;&thinsp;<em>OpenLDAP Admins</em> и <em>OpenLDAP Operators</em>. Членам первой группы будет разрешено менять пароли учётных записей пользователей в каталоге, а членам второй&thinsp;&mdash;&thinsp;изменять любые данные в каталоге (за исключением паролей пользователей). Только теперь наши записи будут POSIX-группами:</p>
+<pre class="list">
+<code class="c"># POSIX-группа "Администраторы каталога"</code>
+<code>dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>cn: OpenLDAP Admins</code>
+<code>gidNumber: 10001</code>
+<code>memberUid: ivanov</code>
+<code></code>
+<code class="c"># POSIX-группа "Операторы каталога"</code>
+<code>dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>cn: OpenLDAP Operators</code>
+<code>gidNumber: 10002</code>
+<code>memberUid: antonova</code>
+</pre>
+
+<p>Начинать, как всегда, будем с <a href="initial_position.html">исходного положения</a>. Добавим наши группы в каталог:</p>
+
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_groups.ldif</strong>
+Enter LDAP Password: 
+adding new entry "cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Теперь дополним имеющиеся в записи базы данных правила ACL (атрибуты <code>olcAccess</code>) условиями <code>by</code>, отражающими требования нашей задачи:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcAccess</code>
+<code>olcAccess: to attrs=userPassword</code>
+<code>  by self write</code>
+<code>  by set="[cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write</code>
+<code>  by anonymous auth</code>
+<code>  by * none</code>
+<code>olcAccess: to *</code>
+<code>  by self write</code>
+<code>  by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write</code>
+<code>  by * read</code>
+</pre>
+
+<p>Интересующие нас условия задаются в строках 6 и 11. По структуре они аналогичны, поэтому подробнее рассмотрим работу такого условия в первом из ACL.</p>
+<p>При попытке пользователя обратиться к атрибуту <code>userPassword</code> какой-либо записи сработает первый ACL (строки 4-8). Если пользователь авторизован от имени той же записи, к которой он пытается обратиться (то есть пользователь обращается к своей собственной записи каталога), то сработает условие <code>by</code> в строке 5, и пользователь получит неограниченный доступ к атрибуту <code>userPassword</code> собственной записи. Пока всё просто и очевидно. Если же пользователь, уже прошедший аутентификацию (то есть ключевое слово <code>user</code> условия-набора окажется непустым), обращается к атрибуту <code>userPassword</code>, произойдёт проверка условия <code>by</code> в строке 6. Заключённое в кавычки условие-набор в этой строке состоит из двух поднаборов, соединённых знаком пересечения этих поднаборов (<code>&</code>). Вместо ключевого слова <code>user</code> во втором поднаборе будет подставлена запись каталога, соответствующая учётной записи пользователя, прошедшего аутентификацию, и из этой записи каталога будут извлечены значения атрибутов <code>uid</code>, которые и составят второй поднабор. DN записи, фигурирующей в первом поднаборе, указано явно в квадратных скобках (<em>cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</em>), из этой записи будут извлечены значения атрибутов <code>memberUid</code>, они составят первый поднабор. Если при пересечении двух поднаборов будут найдены совпадающие значения (то есть одно из значений атрибута <code>uid</code> учётной записи пользователя совпадёт с одним из значений атрибута <code>memberUid</code> записи POSIX-группы), то условие будет считаться совпавшим, и подключившемуся пользователю будут предоставлены права на изменения атрибута <code>userPassword</code>. Если же такого пересечения найдено не будет, то условие <code>by</code> не совпадёт, и проверка перейдёт к условию <code>by</code> в строке 7.</p>
+
+<p>Подробно работа такого условия-набора рассмотрена в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Group%20ACLs%20without%20DN%20syntax">разделе 8.5.2 руководства администратора OpenLDAP 2.4</a>. Применительно к нашему примеру, пользователь <em>uid=ivanov,ou=People,dc=mycompany,dc=ru</em> получит доступ на изменение атрибута <code>userPassword</code>, поскольку значение атрибута <code>uid</code> его записи перечислено в значениях атрибута <code>memberUid</code> записи POSIX-группы <em>cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru</em>. Остальные же пользователи не получат такого доступа, поскольку значения их атрибутов <code>uid</code> не перечислены в значениях атрибута <code>memberUid</code> этой POSIX-группы.</p>
+
+<p>Попробуем убедиться в этом. Применим изменения ACL и проверим полученную в результате запись базы данных:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./101-modify_acl_1.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by set="[cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write by anonymous auth by * none
+olcAccess: {1}to * by self write by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write by * read
+</pre>
+
+<p>Сначала проверим работу первого из полученных ACL утилитой <code>slapacl</code>. Попробуем протестировать доступ к атрибуту <code>userPassword</code> записи <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em> от имени пользователей <em>ivanov</em> и <em>antonova</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru userPassword</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+userPassword: write(=wrscxd)
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru userPassword</strong>
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+userPassword: none(=0)
+</pre>
+
+<p>Наши тесты, как и ожидалось, показывают, что у пользователя <em>ivanov</em> достаточно привилегий для смены пароля пользователя <em>petrov</em>, а у пользователя <em>antonova</em> нет прав даже на чтение этого пароля.</p>
+
+<p>Теперь проведём "натурные" испытания. Попробуем с помощью утилиты <code>ldappasswd</code> изменить пароль пользователя <em>petrov</em> от имени пользователя <em>antonova</em>:</p>
+<pre class="sh">
+$ <strong>ldappasswd -x -v -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -s pertovNewPassword uid=petrov,ou=People,dc=mycompany,dc=ru</strong>
+ldap_initialize( &lt;DEFAULT&gt; )
+Result: Insufficient access (50)
+</pre>
+
+<p>Попытка изменения пароля не удалась. Теперь попробуем сделать то же самое от имени пользователя <em>ivanov</em>:</p>
+<pre class="sh">
+$ <strong>ldappasswd -x -v -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -s pertovNewPassword uid=petrov,ou=People,dc=mycompany,dc=ru</strong>
+ldap_initialize( &lt;DEFAULT&gt; )
+Result: Success (0)
+</pre>
+
+<p>На этот раз утилита <code>ldappasswd</code> отработала успешно. На всякий случай проверим, что у пользователя <em>petrov</em> новый пароль, выполнив простейший поиск от его имени:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru -D uid=petrov,ou=People,dc=mycompany,dc=ru -w pertovNewPassword '(objectClass=posixGroup)' 1.1</strong>
+dn: cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+
+dn: cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+</pre>
+
+<p>Итак, наш первый ACL работает как ожидалось. Убедимся в работоспособности второго ACL. Начнём с тестов утилитой <code>slapacl</code>, проверим доступ к атрибуту <code>cn</code> записи <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em> от имени пользователей <em>ivanov</em> и <em>antonova</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+cn: read(=rscxd)
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+cn: write(=wrscxd)
+</pre>
+
+<p>Пользователь <em>ivanov</em> не перечислен в качестве члена POSIX-группы <em>cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</em>, поэтому он получает доступ на чтение атрибута <code>cn</code> (как попадающий под условие <code>by * read</code>). Пользователь <em>antonova</em> перечислена в качестве члена этой POSIX-группы, поэтому она имеет доступ на изменение атрибута <code>cn</code>. Всё в порядке.</p>
+
+<p>Выполним также реальную проверку, для чего попробуем изменить значение атрибута <code>cn</code> записи <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em>:</p>
+<pre class="list">
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: cn</code>
+<code>cn: Petr Petrovich Petrov</code>
+</pre>
+
+<p>Сначала попробуем применить эти изменения от имени пользователя <em>ivanov</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./003-modify_petrov.ldif</strong>
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+</pre>
+
+<p>Попытка неудачная&thinsp;&mdash;&thinsp;у пользователя <em>ivanov</em> недостаточно прав для осуществления модификации. Попробуем выполнить то же самое от имени пользователя <em>antonova</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./003-modify_petrov.ldif</strong>
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+</pre>
+
+<p>Изменения успешно применились. Убедимся в этом:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b uid=petrov,ou=People,dc=mycompany,dc=ru -D uid=petrov,ou=People,dc=mycompany,dc=ru -w pertovNewPassword cn</strong>
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+cn: Petr Petrovich Petrov
+</pre>
+
+<p>Итак, второй наш ACL также работает. Задача решена. Но что если, по аналогии с ситуацией с "обычными" группами, мы не хотим ограничивать администраторов каталога полномочиями только изменять пароли, но хотим дать им права изменять любые атрибуты любых записей наравне с операторами каталога? По понятным причинам сценария вложенных групп и их рекурсивного обхода в случае POSIX-групп воссоздать не получится. Тем не менее, пути решения такой задачи есть. Первый, самый простой, очевидный и не требующий дополнительных перенастроек каталога&thinsp;&mdash;&thinsp;аккуратно вести членов группы <em>OpenLDAP Operators</em>, добавляя туда (удаляя оттуда) тех же членов, что и в группу <em>OpenLDAP Admins</em>:</p>
+<pre class="list">
+<code>dn: uid=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: memberUid</code>
+<code>memberUid: ivanov</code>
+</pre>
+
+<p>Но не все администраторы склонны полагаться на свою аккуратность, а тем более на аккуратность коллег по цеху. Поэтому вторым, также вполне очевидным решением, будет добавление ещё одного условия <code>by</code> во второй ACL:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to *</code>
+<code>  by self write</code>
+<code>  by set="[cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write</code>
+<code>  by set="[cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write</code>
+<code>  by * read</code>
+</pre>
+
+<p>Но мы попробуем объединить два наших набора в один, заодно продемонстрировав различные варианты операторов в наборах:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to *</code>
+<code>  by self write</code>
+<code>  by set="([cn=OpenLDAP ] + ([Admins] | [Operators]) + [,ou=Groups,dc=mycompany,dc=ru])/memberUid & user/uid" write</code>
+<code>  by * read</code>
+</pre>
+
+<p>Рассмотрим подробно набор в строке 9. Он состоит из двух поднаборов, соединённых оператором пересечения <code>&</code>. Второй поднабор (после оператора <code>&</code>) остался прежним: он будет составлен из значений атрибута <code>uid</code> записи каталога, соответствующей учётной записи того пользователя, который прошёл аутентификацию при подключении к каталогу. Первый же поднабор (перед оператором <code>&</code>) выглядит устрашающе, тем не менее, в нём довольно просто разобраться, если делать это по частям.</p>
+
+<p>Перед началом разбора обратим внимание на строковые значения, заключённые в квадратные скобки. Если они не представляют собой валидное DN (как во всех наших предыдущих примерах с условиями-наборами), то воспринимаются механизмом разборки ACL OpenLDAP не как указатель на запись каталога, а как обычные строковые литералы. Итак, в данном случае <em>cn=OpenLDAP </em>, <em>Admins</em>, <em>Operators</em> и <em>,ou=Groups,dc=mycompany,dc=ru</em>&thinsp;&mdash;&thinsp;это просто строки, из которых мы будем составлять условие поднабора.</p>
+
+<p>Далее нам следует познакомиться с двумя ранее не рассмотренными операторами механизма наборов ACL OpenLDAP. Оператор объединения <code>|</code> предназначен для формирования единого набора из двух смежных с ним поднаборов. Оператор конкатенации <code>+</code> предназначен для "склеивания" значений двух смежных поднаборов, причём в итоговом наборе все значения первого поднабора будут "склеены" со всеми значениями второго поднабора, то есть количество значений в итоговом наборе будет равно произведению количества значений первого поднабора на количество значений второго поднабора. Как и арифметические операторы, операторы механизма наборов ACL OpenLDAP имеют приоритет выполнения: у <code>&</code>, <code>|</code> и <code>+</code> он одинаков, а вот оператор "действия" <code>/</code> имеет более высокий приоритет. По аналогии с арифметикой, для изменения порядка применения операторов используются круглые скобки.</p>
+
+<p>Вооружившись этими нехитрыми знаниями, можно приступать к разбору первого поднабора из нашего примера. Самое приоритетное действие у нас во внутренних круглых скобках: <em>([Admins] | [Operators])</em>. Здесь создаётся набор, представляющий собой объединение двух строковых значений:</p>
+<pre class="list">
+Admins
+Operators
+</pre>
+
+<p>Далее полученный набор с помощью первого оператора конкатенации <code>+</code> "склеивается" с набором, состоящим из одного строкового элемента <em>cn=OpenLDAP </em>. В итоге получаем такой набор:</p>
+<pre class="list">
+cn=OpenLDAP Admins
+cn=OpenLDAP Operators
+</pre>
+
+<p>Далее с помощью второго оператора конкатенации <code>+</code> этот набор "склеивается" с ещё одним набором, также состоящим из одного строкового элемента <em>,ou=Groups,dc=mycompany,dc=ru</em>. В итоге получаем такой набор:</p>
+<pre class="list">
+cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru
+cn=OpenLDAP Operators,ou=Groups,dc=mycompany,dc=ru
+</pre>
+
+<p>На этом "высокоприоритетные" действия во внешних фигурных скобках заканчиваются. В итоге мы получили набор, состоящий из двух валидных DN, которые можно использовать для указания на две записи каталога, в данном случае на наши записи POSIX-групп. Далее с помощью оператора действия <code>/</code> из этих записей будут извлечены значения атрибутов <code>memberUid</code>, которые и составят итоговый первый поднабор нашего условия-набора:</p>
+<pre class="list">
+ivanov
+antonova
+</pre>
+
+<p>Дальнейшая работа условия-набора зависит от пользователя, выполняющего операцию в каталоге. Если в записи каталога, соответствующей учётке этого пользователя, значением атрибута <code>uid</code> будет <em>ivanov</em> или <em>antonova</em>, то пересечение (<code>&</code>) с первым поднабором будет найдено, и условие сработает.</p>
+
+<p>От теоретических рассуждений вернёмся к нашему каталогу. Применим изменения и проверим, что получилось:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./103-modify_acl_3.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by set="[cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write by anonymous auth by * none
+olcAccess: {1}to * by self write by set="([cn=OpenLDAP ] + ([Admins] | [Operators]) + [,ou=Groups,dc=mycompany,dc=ru])/memberUid & user/uid" write by * read
+</pre>
+
+<p>Протестируем работу полученного ACL утилитой <code>slapacl</code>. Проверим доступ к атрибуту <code>cn</code> записи <em>uid=petrov,ou=People,dc=mycompany,dc=ru</em> от имени пользователей <em>ivanov</em>, <em>antonova</em> и <em>sidorov</em>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+cn: write(=wrscxd)
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+cn: write(=wrscxd)
+# <strong>slapacl -D uid=sidorov,ou=People,dc=mycompany,dc=ru -b uid=petrov,ou=People,dc=mycompany,dc=ru cn</strong>
+authcDN: "uid=sidorov,ou=people,dc=mycompany,dc=ru"
+cn: read(=rscxd)
+</pre>
+
+<p>Первые два пользователя, являясь членами POSIX-групп <em>OpenLDAP Admins</em> и <em>OpenLDAP Operators</em>, получили доступ на изменение атрибута <code>cn</code>, а пользователь <em>sidorov</em>, не являющийся членом этих групп, получил доступ только на чтение атрибута (согласно условию <code>by * read</code>). Наш ACL работает.</p>
+
+<h2 id="summary">Итоговые настройки</h2>
+<p>В ходе этого урока мы познакомились с записями каталога, представляющими собой объекты POSIX-групп, их предназначением, а также механизмом, позволяющим использовать эти объекты для разграничения доступа к самому каталогу OpenLDAP. Более подробно мы остановились на разных вариантах построения условий-наборов в ACL OpenLDAP, разобрав работу различных операторов механизма наборов. Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так (для удобства чтения ACL мы разбили их вывод на несколько строк):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to attrs=userPassword
+  by self write
+  by set="[cn=OpenLDAP Admins,ou=Groups,dc=mycompany,dc=ru]/memberUid & user/uid" write
+  by anonymous auth
+  by * none
+olcAccess: {1}to *
+  by self write
+  by set="([cn=OpenLDAP ] + ([Admins] | [Operators]) + [,ou=Groups,dc=mycompany,dc=ru])/memberUid & user/uid" write
+  by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: POSIX-группы</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;14 июня 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

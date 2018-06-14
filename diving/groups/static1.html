@@ -150,7 +150,7 @@ ACL set[0]=uid=antonova,ou=people,dc=mycompany,dc=ru
 ACL set[1]=cn=openldap admins,ou=groups,dc=mycompany,dc=ru
 ACL set[2]=uid=ivanov,ou=people,dc=mycompany,dc=ru
 </pre>
-<p>После построения набора определяется, входит ли в него DN пользователя, прошедшего аутентификацию (условие ACL <code>user</code>). Если да, этому пользователю будут предоставлены соответствующие права. Подробно алгоритм работы данного набора разбирается в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Groups%20of%20Groups">примере 8.5.1 главы 8 учебника OLAG24</a>.</p>
+<p>После построения набора определяется, входит ли в него DN пользователя, прошедшего аутентификацию (подставляется вместо ключевого слова условий-наборов <code>user</code>). Если да, этому пользователю будут предоставлены соответствующие права. Подробно алгоритм работы данного набора разбирается в <a href="//pro-ldap.ru/tr/admin24/access-control.html#Groups%20of%20Groups">разделе 8.5.1 руководства администратора OpenLDAP 2.4</a>.</p>
 
 <p>Применим изменения и проверим (от имени <code>rootDN</code> конфигурационного каталога <code>cn=config</code>):</p>
 <pre class="sh">
@@ -1080,5 +1080,5 @@ olcRefintAttribute: owner
 </pre>
 
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: групповые условия в ACL и наложение refint</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;14 июня 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>
