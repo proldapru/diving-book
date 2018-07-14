@@ -248,8 +248,7 @@ roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
 <pre class="sh">
 $ <strong>ldapsearch -xLLL -b uid=ivanov,ou=People,dc=mycompany,dc=ru '*' memberOf</strong>
 dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
-objectClass: person
-objectClass: uidObject
+objectClass: inetOrgPerson
 uid: ivanov
 cn: Ivan Ivanov
 sn: Ivanov
@@ -347,8 +346,7 @@ ldap_modify: Insufficient access (50)
 
 $ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(uid=petrov)(uid=sidorov))'</strong>
 dn: uid=petrov,ou=People,dc=mycompany,dc=ru
-objectClass: person
-objectClass: uidObject
+objectClass: inetOrgPerson
 uid: petrov
 cn: Petr Petrov
 sn: Petrov
@@ -356,8 +354,7 @@ telephoneNumber: 111-22-33
 description: Cool Developer
 
 dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
-objectClass: person
-objectClass: uidObject
+objectClass: inetOrgPerson
 uid: sidorov
 cn: Sidor Sidorov
 sn: Sidorov
@@ -375,8 +372,7 @@ modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
 
 $ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(|(uid=petrov)(uid=sidorov))'</strong>
 dn: uid=petrov,ou=People,dc=mycompany,dc=ru
-objectClass: person
-objectClass: uidObject
+objectClass: inetOrgPerson
 uid: petrov
 cn: Petr Petrov
 sn: Petrov
@@ -384,8 +380,7 @@ telephoneNumber: 111-22-33
 description: Cool Developer
 
 dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
-objectClass: person
-objectClass: uidObject
+objectClass: inetOrgPerson
 uid: sidorov
 cn: Sidor Sidorov
 sn: Sidorov
@@ -669,5 +664,5 @@ olcMemberOfDanglingError: unwillingToPerform
 </pre>
 
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > Статические группы: наложение memberof</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;15 июля 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>
