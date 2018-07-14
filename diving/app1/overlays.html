@@ -4,13 +4,20 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 <link rel="stylesheet" href="/pro-ldap.css" type="text/css">
-<title>Приложение 1</title>
+<title>Приложение 1&thinsp;&mdash;&thinsp;Наложения</title>
 <script src="/pro-ldap.js"></script>
 </head>
 <body>
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 1</a> > Конфигурация наложений</p>
 <h1>Приложение 1: Соответствие директив конфигурационного файла slapd.conf атрибутам динамической конфигурации cn=config</h1>
 <h2>Конфигурация наложений</h2>
+<h3 id="dynlist">Наложение dynlist</h3>
+<p>Man-страница наложения: <a href="//pro-ldap.ru/tr/man/slapo-dynlist.5.html">slapo-dynlist</a>. Объектный класс наложения: <code>olcDynamicList</code>. Часто при использовании данного наложения также подключают набор схемы данных <a href="//pro-ldap.ru/tr/zytrax/ape/dyngroup-schema.html">dyngroup.schema</a> из стандартной поставки OpenLDAP. При подключении этого набора схемы становится доступен структурный объектный класс <code>groupOfURLs</code> (обязательный атрибут <code>cn</code>, необязательные&thinsp;&mdash;&thinsp;<code>memberURL</code>, <code>businessCategory</code>, <code>description</code>, <code>o</code>, <code>ou</code>, <code>owner</code> и <code>seeAlso</code>), и вспомогательный объектный класс <code>dgIdentityAux</code> (необязательные атрибуты <code>dgIdentity</code> и <code>dgAuthz</code>).</p>
+<div class="pltab"><table>
+<tr><th>Директива slapd.conf</th><th>Атрибут cn=config</th><th>Синтаксис</th><th>Значения</th><th>Примечание</th></tr>
+<tr><td>dynlist-attrset</td><td>olcDLattrSet</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.6">Directory String</a></td><td>Строка конфигурации наложения. Набор параметров конфигурации может быть различным, подробнее смотрите в <a href="//pro-ldap.ru/tr/man/slapo-dynlist.5.html">man-странице наложения</a>.</td><td>В наложении предусмотрена настройка нескольких значений атрибута <code>olcDLattrSet</code> с разными параметрами конфигурации. Атрибут поддерживает ранжирование значений (X-ORDERED).</td></tr>
+</table></div>
+
 <h3 id="memberof">Наложение memberof</h3>
 <p>Man-страница наложения: <a href="//pro-ldap.ru/tr/man/slapo-memberof.5.html">slapo-memberof</a>. Объектный класс наложения: <code>olcMemberOf</code>. При подключении модуля <code>memberof</code> в каталоге становится доступен операционный атрибут <code>memberOf</code> (<a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">синтаксис DN</a>), используемый по умолчанию наложением для поддержания сведений об обратном членстве в группах.</p>
 <div class="pltab"><table>
@@ -33,5 +40,5 @@
 <tr><td>refint_modifiersname</td><td>olcRefintModifiersName</td><td><a href="//pro-ldap.ru/tr/rfc/rfc4517.html#section-3.3.9">DN</a></td><td>Правильно сформированное DN, по умолчанию&thinsp;&mdash;&thinsp;cn=Referential Integrity Overlay</td><td></td></tr>
 </table></div>
 <p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 1</a> > Конфигурация наложений</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 мая 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;14 июля 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>
