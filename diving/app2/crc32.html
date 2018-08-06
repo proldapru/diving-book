@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Приложение 2&thinsp;&mdash;&thinsp;Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 2</a> > Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</p>
+<h2>Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</h2>
+<p>Функционал динамической конфигурации OpenLDAP всё ещё развивается, поэтому иногда (не часто) приходится сталкиваться с ситуацией, когда поменять что-то "на лету" не получается. Например, мы отрабатывали примеры для данной книги на сборке OpenLDAP версии 2.4.45, корневая директория которой располагалась в <code>/opt/openldap-2.4.45</code>. В марте 2018 года вышла новая версия OpenLDAP 2.4.46 и мы решили перевести примеры на работу с ней. Конечно, ничего сложного в этом нет, за исключением пути к модулям <code>slapd</code>, который, как известно, настраивается в значении атрибута <code>olcModulePath</code> записи <code>/etc/ldap/slapd.d/cn=config/cn=module{0}.ldif</code>. Итак, мы собрали новую версию OpenLDAP в <code>/opt/openldap-2.4.46</code> и предусмотрительно (чтобы в будущем не наступать на те же грабли) сделали на неё символическую ссылку <code>openldap-lastest</code>:</p>
+<pre class="sh">
+$ <strong>ls -l /opt</strong>
+итого 8
+drwxr-xr-x 10 root root 4096 июн  7  2017 openldap-2.4.45
+drwxr-xr-x 10 root root 4096 мар 25  2018 openldap-2.4.46
+lrwxrwxrwx  1 root root   17 мар 25  2018 openldap-lastest -> ./openldap-2.4.46
+</pre>
+
+<p>Осталось только заменить путь к модулям в наших примерах:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcModulePath</code>
+<code>olcModulePath: /opt/openldap-lastest/libexec/openldap/</code>
+</pre>
+
+<p>Но не тут-то было:</p>
+<pre class="sh">
+$ ldapmodify -x -D cn=config -W -f ./modify_module_path.ldif 
+Enter LDAP Password: 
+modifying entry "cn=module{0},cn=config"
+ldap_modify: Other (e.g., implementation specific) error (80)
+	additional info: cannot delete olcModulePath
+</pre>
+
+<p>А с учётом того, что <code>olcModulePath</code>&thinsp;&mdash;&thinsp;однозначный (SINGLE-VALUE) атрибут, мы заходим в тупик... Правильный путь в этом случае&thinsp;&mdash;&thinsp;<a href="../begin/">начать всё заново</a>, и постараться в дальнейшем быть более дальновидными. Но примеров так много, а переделывать всё так скучно, что мы всё-таки решаем остановить <code>slapd</code>, находим нужный файл в конфигурационной директории и, несмотря на строгое предупреждение в первой же строке, правим его вручную:</p>
+<pre class="list">
+# AUTO-GENERATED FILE - DO NOT EDIT!! Use ldapmodify.
+# CRC32 d4fcdb89
+dn: cn=module{0}
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /opt/openldap-lastest/libexec/openldap
+olcModuleLoad: {0}back_mdb.la
+structuralObjectClass: olcModuleList
+entryUUID: 0dbe4634-6770-1037-8520-090c21d99176
+creatorsName: cn=config
+createTimestamp: 20171127033735Z
+entryCSN: 20171127033735.865760Z#000000#000#000000
+modifiersName: cn=config
+modifyTimestamp: 20171127033735Z
+</pre>
+<p>Ура, задача решена! Но теперь, как укор совести, при каждом запуске <code>slapd</code> или вызове его инструментов (например, <code>slapcat</code>) мы будем видеть такое:</p>
+
+<pre class="sh">
+ldif_read_file: checksum error on "/etc/ldap/slapd.d//cn=config/cn=module{0}.ldif"
+</pre>
+
+<p>К счастью, эта проблема решаема. Нужно просто пересчитать контрольную сумму CRC32 содержимого файла без первых двух строк комментария. В Linux это делается с помощью утилиты <code>crc32</code>, в Ubuntu она входит в пакет <code>libarchive-zip-perl</code>.</p>
+
+<p>Разберём этот процесс поэтапно. Сначала получим содержимое файла без первых двух строк:</p>
+<pre class="sh">
+$ <strong>tail -n +3 /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif</strong> 
+dn: cn=module{0}
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /opt/openldap-lastest/libexec/openldap
+olcModuleLoad: {0}back_mdb.la
+structuralObjectClass: olcModuleList
+entryUUID: 0dbe4634-6770-1037-8520-090c21d99176
+creatorsName: cn=config
+createTimestamp: 20171127033735Z
+entryCSN: 20171127033735.865760Z#000000#000#000000
+modifiersName: cn=config
+modifyTimestamp: 20171127033735Z
+</pre>
+
+<p>Теперь получим контрольную сумму этого содержимого:</p>
+<pre class="sh">
+$ <strong>crc32 <(tail -n +3 /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif)</strong>
+23f5b0da
+</pre>
+
+<p>Осталось подставить вновь сформированную контрольную сумму на её место в файле. Это можно сделать в любом текстовом редакторе, но можно и из командной строки. Мы, по привычке, используем для этой цели старый добрый <code>perl</code>. Сначала холостой прогон:</p>
+<pre class="sh">
+$ <strong>perl -wpe "s/^# CRC32 .+$/# CRC32 $(crc32 <(tail -n +3 /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif))/" /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif</strong>
+# AUTO-GENERATED FILE - DO NOT EDIT!! Use ldapmodify.
+# CRC32 23f5b0da
+dn: cn=module{0}
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /opt/openldap-lastest/libexec/openldap
+olcModuleLoad: {0}back_mdb.la
+structuralObjectClass: olcModuleList
+entryUUID: 0dbe4634-6770-1037-8520-090c21d99176
+creatorsName: cn=config
+createTimestamp: 20171127033735Z
+entryCSN: 20171127033735.865760Z#000000#000#000000
+modifiersName: cn=config
+modifyTimestamp: 20171127033735Z
+</pre>
+
+<p>Всё в порядке, контрольная сумма заменена. Осталось применить это непосредственно к нашему файлу:</p>
+<pre class="sh">
+$ <strong>perl -i -wpe "s/^# CRC32 .+$/# CRC32 $(crc32 <(tail -n +3 /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif))/" /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif</strong>
+$ <strong>cat /etc/ldap/slapd.d/cn\=config/cn\=module\{0\}.ldif</strong>
+# AUTO-GENERATED FILE - DO NOT EDIT!! Use ldapmodify.
+# CRC32 23f5b0da
+dn: cn=module{0}
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /opt/openldap-lastest/libexec/openldap
+olcModuleLoad: {0}back_mdb.la
+structuralObjectClass: olcModuleList
+entryUUID: 0dbe4634-6770-1037-8520-090c21d99176
+creatorsName: cn=config
+createTimestamp: 20171127033735Z
+entryCSN: 20171127033735.865760Z#000000#000#000000
+modifiersName: cn=config
+modifyTimestamp: 20171127033735Z
+</pre>
+
+<p>Вот и всё. Контрольная сумма совпадает и назойливые сообщения больше не будут нас беспокоить.</p>
+
+<p>Разумеется, таким способом восстанавливается контрольная сумма любого LDIF-файла в конфигурационной директории <code>cn=config</code>.</p>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Приложение 2</a> > Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;4 августа 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
