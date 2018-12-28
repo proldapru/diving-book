@@ -1,0 +1,380 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 3. Классические динамические группы</p>
+<h1>3. Классические динамические группы</h1>
+<h3>Содержание</h3>
+<div class="contents">
+<ul>
+<li><a href="#formulation">Постановка задачи</a></li>
+<li><a href="#solution">Решение</a></li>
+<li><a href="#dynamic_group_acl">Что ещё можно сделать: ACL на основе динамических групп</a></li>
+<li><a href="#summary">Итоговые настройки</a></li>
+</ul>
+</div>
+
+<h2 id="formulation">Постановка задачи</h2>
+<p><strong>Предпосылки:</strong> В организации, сведения о которой ведутся в нашем каталоге, два отдела: <em>Developers</em> и <em>Designers</em>. Информация о принадлежности пользователя отделу фиксируется как значение атрибута <code>ou</code> в учётной записи каждого пользователя. Разграничение доступа к интернет-ресурсам на прокси-сервере организации решено выполнить на основании принадлежности пользователей группам соответствующих отделов в каталоге.</p>
+
+<p><strong>Задача:</strong> Требуется создать классические группы, постоянно отражающие актуальную структуру организации.</p>
+
+<h2 id="solution">Решение</h2>
+<p><a href="index.html">Как мы помним</a>, объекты групп в каталоге можно построить на разных объектных классах. В данном примере для построения групп мы будем использовать класс <code>groupOfNames</code> с атрибутом членства <code>member</code>. Если Вы планируете строить динамические группы на классе <code>groupOfUniqueNames</code> (атрибут членства <code>uniqueMember</code>) или <code>organizationalRole</code> (атрибут членства <code>roleOccupant</code>), просто внесите в примеры настройки соответствующие изменения.</p>
+
+<p>Начинать, как всегда, будем с <a href="initial_position.html">исходного положения</a> каталога. В данном примере порядок работы будет такой: настройка наложения, модификация записей пользователей, добавление записей динамических групп.</p>
+
+<h3 id="step1">Шаг 1. Настройка наложения dynlist</h3>
+<p>Как всегда, первым делом нужно подгрузить  модуль наложения. Традиционный LDIF для этого действия:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: dynlist.la</code>
+</pre>
+
+<p>Применим его и проверим загруженные модули:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./101-add_dynlist_module.ldif</strong>
+Enter LDAP Password:
+modifying entry "cn=module{0},cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b cn=module{0},cn=config olcModuleLoad</strong>
+Enter LDAP Password:
+dn: cn=module{0},cn=config
+olcModuleLoad: {0}back_mdb.la
+olcModuleLoad: {1}dynlist.la
+</pre>
+
+<p>Переходим к настройкам наложения. Для данного примера мы сформируем следующую запись наложения с объектным классом <code>olcDynamicList</code> (дочернюю по отношению к рабочей базе данных):</p>
+<pre class="list">
+<code>dn: olcOverlay=dynlist,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcDynamicList</code>
+<code>olcOverlay: dynlist</code>
+<code>olcDLattrSet: groupOfNames labeledURI member</code>
+</pre>
+
+<p>Параметры настройки наложения указываются в значении атрибута <code>olcDLattrSet</code> (строка 4). Как и в <a href="dynamic2.2.html#step1">предыдущем примере</a>, у нас есть три разделённых пробелами параметра. Первые два из них, <a href="dynamic2.1.html#dynlist_params">как мы уже знаем</a>, задают имена объектного класса и типа атрибута, по которым наложение <code>dynlist</code> отбирает среди результирующего набора операции поиска LDAP те записи, которые требуется дополнить динамическим содержимым. В качестве объектного класса мы выбрали общепринятый для групповых записей каталога класс <code>groupOfNames</code>, а тип атрибута <code>labeledURI</code> является стандартным для хранения URI, которые необходимы нам для задания параметров поиска динамического содержимого.</p>
+
+<p>Наиболее интересным в данном примере является третий параметр. Здесь он представляет собой ещё одно имя типа атрибута (<code>member</code>). В этом случае, то есть когда третьим параметром наложения является единичное имя типа атрибута, наложение <code>dynlist</code> переходит в режим составления динамических групп. В этом режиме наложения также осуществляется вторичный поиск в каталоге по критериям, задаваемым в LDAP URI той записи, которую требуется дополнить динамическим содержимым. Если в результате такого вторичного поиска будут найдены какие-либо записи, то уникальные имена (DN) этих записей будут подставлены в запись динамической группы в качестве значений атрибута, имя которого указано в третьем параметре наложения. То есть динамическим содержимым будут имена записей-членов группы в значениях атрибута членства. В данном случае был выбран стандартный для объектного класса <code>groupOfNames</code> атрибут членства <code>member</code>.</p>
+
+<p>Как видно, алгоритм работы наложения в режиме составления динамических групп даже несколько проще, чем <a href="dynamic2.1.html#dynlist_algorithm">при составлении динамических списков</a>.</p>
+
+<p>Добавим нашу запись с настройками наложения и убедимся в её наличии:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=config -W -f ./102-add_dynlist_overlay.ldif</strong>
+Enter LDAP Password:
+adding new entry "olcOverlay=dynlist,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s one</strong>
+Enter LDAP Password:
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}groupOfNames labeledURI member
+</pre>
+
+<p>Наложение стало первым (индекс 0) для нашей рабочей базы данных. Переходим к следующему этапу.</p>
+
+<h3 id="step2">Шаг 2. Модификация учётных записей пользователей</h3>
+<p>Дополним записи пользователей признаком принадлежности к отделам. Для этого сформируем такой LDIF-файл:</p>
+<pre class="list">
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+<code></code>
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code></code>
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code></code>
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+</pre>
+
+<p>Применим его к нашему каталогу и посмотрим, в каком состоянии будут записи пользователей после модификации:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_users_attributes.ldif</strong>
+Enter LDAP Password: 
+modifying entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b ou=People,dc=mycompany,dc=ru -s one</strong>
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: ivanov
+cn: Ivan Ivanov
+sn: Ivanov
+ou: Developers
+
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: petrov
+cn: Petr Petrov
+sn: Petrov
+ou: Developers
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: sidorov
+cn: Sidor Sidorov
+sn: Sidorov
+ou: Designers
+
+dn: uid=antonova,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: antonova
+cn: Antonina Antonova
+sn: Antonova
+ou: Designers
+</pre>
+
+<p>Отлично! Переходим к следующему этапу.</p>
+
+<h3 id="step3">Шаг 3. Добавление записей динамических групп</h3>
+<p>Наконец, сформируем LDIF для добавления в каталог записей динамических групп двух наших отделов:</p>
+<pre class="list">
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>objectClass: extensibleObject</code>
+<code>cn: Developers</code>
+<code>member: cn=dummy</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))</code>
+<code></code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfNames</code>
+<code>objectClass: extensibleObject</code>
+<code>cn: Designers</code>
+<code>member: cn=dummy</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))</code>
+</pre>
+
+<p>Записи групп строятся на структурном объектном классе <code>groupOfNames</code>, который мы указывали в настройках наложения <code>dynlist</code>. Обязательные атрибуты этого класса: <code>cn</code>, который мы использовали для формирования RDN, и <code>member</code>, в котором хранятся DN записей-членов группы. В связи с тем, что атрибут <code>member</code> должен обязательно присутствовать в записи, мы добавили в наши группы фиктивных членов (строки 5 и 12). Это общепринятая практика для групп с объектным классом <code>groupOfNames</code>.</p>
+
+<p>Условия для поиска динамического содержимого оформлены в виде LDAP URI в значениях атрибутов <code>labeledURI</code> динамических записей (строки 6 и 13). Тип атрибута <code>labeledURI</code> не входит в число обязательных или допустимых атрибутов класса <code>groupOfNames</code>. В данном примере для включения таких атрибутов в наши записи мы воспользовались специальным вспомогательным объектным классом <a href="//pro-ldap.ru/tr/rfc/rfc4512.html#section-4.3">extensibleObject</a>, позволяющим включать в запись любой известный LDAP-серверу пользовательский атрибут.</p>
+
+<p>Критерии поиска, задаваемые в LDAP URI, практически полностью совпадают с критериями из <a href="dynamic2.2.html#step2">предыдущего примера</a>. Единственное отличие&thinsp;&mdash;&thinsp;отсутствие списка возвращаемых атрибутов (4-й компонент URI), поскольку для построения динамических групп никаких атрибутов не требуется. Если список возвращаемых атрибутов будет не пуст (например, если Вы скопируете откуда-то готовый URI и забудете очистить список атрибутов), наложение всё равно построит динамическую группу. Но в некоторых случаях, например, при <a href="#dynamic_group_acl">составлении ACL на основе динамических групп</a>, наличие атрибутов в 4-м компоненте URI является критичным: ACL просто не будут работать. Так что хорошей практикой является составление корректных URI, соответствующих условиям решаемой задачи.</p>
+
+<p>Добавим записи наших групп в каталог:</p>
+<pre class="sh">
+$ <strong>$ ldapadd -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./003-add_groups.ldif</strong>
+Enter LDAP Password:
+adding new entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>А теперь попробуем запросить их:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b ou=Groups,dc=mycompany,dc=ru -s one -o ldif-wrap=no</strong>
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: Designers
+member: cn=dummy
+member: uid=antonova,ou=People,dc=mycompany,dc=ru
+member: uid=sidorov,ou=People,dc=mycompany,dc=ru
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+objectClass: groupOfNames
+objectClass: extensibleObject
+cn: Developers
+member: cn=dummy
+member: uid=ivanov,ou=People,dc=mycompany,dc=ru
+member: uid=petrov,ou=People,dc=mycompany,dc=ru
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))
+</pre>
+
+<p>Как видно, кроме фиктивных членов группы наполнились атрибутами членства, значения которых представляют собой уникальные имена (DN) записей пользователей, работающих в соответствующих отделах. Наложение <code>dynlist</code> сработало, как ожидалось.</p>
+
+<h2 id="dynamic_group_acl">Что ещё можно сделать: ACL на основе динамических групп</h2>
+<p>Итак, у нас есть группы с динамическими членами. Но можем ли мы составить на основе таких групп групповые ACL для разграничения доступа к каталогу OpenLDAP? То есть, чтобы пользователи на основе принадлежности к динамическим группам получали те или иные права доступа к каталогу? Давайте попробуем.</p>
+
+<p>Предположим, что мы хотим разрешить пользователям, принадлежащим группе <em>cn=Developers,ou=Groups,dc=mycompany,dc=ru</em>, изменять значения атрибута <code>description</code> в учётных записях любых пользователей в каталоге. Для этого мы можем добавить в запись настроек нашей рабочей базы данных следующий ACL:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=description</code>
+<code>  by self write</code>
+<code>  by group/groupOfNames/member="cn=Developers,ou=Groups,dc=mycompany,dc=ru" write</code>
+<code>  by * read</code>
+</pre>
+
+<p><a href="initial_position.html">Как мы помним</a>, для нашей базы данных уже определено два ACL, так что при добавлении приведённого выше ACL он займёт место между ними. Применим изменения и посмотрим, что получилось:</p>
+
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./103-add_group_acl.ldif</strong>
+Enter LDAP Password:
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s base -o ldif-wrap=no olcAccess
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=description by self write by group/groupOfNames/member="cn=Developers,ou=Groups,dc=mycompany,dc=ru" write by * read
+olcAccess: {2}to * by self write by * read
+</pre>
+
+<p>Хорошо. Теперь посмотрим, как это повлияло на привилегии пользователей. Для примера мы будем тестировать права на изменения атрибута <code>description</code> записи <em>uid=sidorov,ou=People,dc=mycompany,dc=ru</em> при доступе к каталогу от имени пользователей <em>antonova</em> (не является членом группы <em>Developers</em>) и <em>ivanov</em> (является членом группы <em>Developers</em>).</p>
+
+<p>Сначала протестируем привилегии пользователей утилитой <code>slapacl</code> (для её работы требуется считать списки контроля доступа из конфигурационной директории <code>slapd.d</code>, поэтому мы запускаем её с правами пользователя root):</p>
+<pre class="sh">
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=sidorov,ou=People,dc=mycompany,dc=ru description</strong>
+dynlist_db_open: unable to fetch attributeDescription "dgIdentity": 17 (attribute type undefined)
+dynlist_db_open: unable to fetch attributeDescription "dgAuthz": 17 (attribute type undefined)
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+description: read(=rscxd)
+
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=sidorov,ou=People,dc=mycompany,dc=ru description</strong>
+dynlist_db_open: unable to fetch attributeDescription "dgIdentity": 17 (attribute type undefined)
+dynlist_db_open: unable to fetch attributeDescription "dgAuthz": 17 (attribute type undefined)
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+description: read(=rscxd)
+</pre>
+<p>Как мы видим, в обоих случаях получены права только на чтение, независимо от того, принадлежит ли пользователь, запрашивающий доступ к каталогу, динамической группе <em>Developers</em>, или нет. Однако возможно, что утилита <code>slapacl</code> просто не умеет работать с динамическими группами. Попробуем провести натурные испытания. Для этого составим такой LDIF с модификацией атрибута <code>description</code> записи пользователя <em>sidorov</em>:</p>
+<pre class="list">
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: description</code>
+<code>description: The most talented designer</code>
+</pre>
+
+<p>Попробуем применить эти изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./004-modify_user_description.ldif</strong>
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+
+$ <strong>ldapmodify -x -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./004-modify_user_description.ldif</strong>
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+</pre>
+
+<p>Эксперимент показал, что пользователи и в самом деле не получают права на изменения на основе принадлежности динамической группе. Значит, ACL на основе динамических групп не работают? Всё не так просто, и чтобы докопаться до истины, надо очень внимательно перечитать <a href="//pro-ldap.ru/tr/man/slapd.access.5.html">man-страницу slapd.access(5)</a>, а конкретнее, часть материала, касающуюся групповых условий в поле &lt;who&gt; ACL. Приведём здесь несколько сокращённую выдержку:
+<blockquote style="font-style:italic">Выражение <b>group[/&lt;objectclass&gt;[/&lt;attrname&gt;]]=&lt;group&gt;</b> означает, что доступ предоставляется тем запрашивающим, чьё DN перечислено в групповой записи, DN которой задано в <b>&lt;group&gt;</b>. Необязательные параметры <b>&lt;objectclass&gt;</b> и <b>&lt;attrname&gt;</b> определяют объектный класс групповой записи и тип атрибута членства в ней. Значения по умолчанию - <b>groupOfNames</b> и <b>member</b>, соответственно. Для статических групп указанный тип атрибута должен иметь синтаксис <b>DistinguishedName</b> или <b>NameAndOptionalUID</b>. Для динамических групп тип атрибута должен быть подтипом от <b>labeledURI</b>. В динамических группах будут оцениваться только LDAP URI формы <b>ldap:///&lt;base&gt;??&lt;scope&gt;?&lt;filter&gt;</b> с поиском только по локальному серверу.</blockquote>
+</p>
+
+<p>То есть, для ACL на основе динамических групп нужно указать тип атрибута, содержащий LDAP URI с параметрами вторичного поиска (в нашем примере это как раз <code>labeledURI</code>), и, кроме того, грамотно составить сам URI (о чём мы говорили выше). Но тогда какой объектный класс следует указывать в групповом условии ACL? Экспериментальным путём было установлено, что это должен быть класс, содержащий атрибут, в котором указан LDAP URI. Для нашего примера мы должны указать класс <code>extensibleObject</code>. Если бы, как в <a href="dynamic2.2.html#step2">предыдущем примере</a>, для подключения атрибута <code>labeledURI</code> мы бы использовали объектный класс <code>labeledURIObject</code>, то в групповом условии ACL указывались бы именно эти класс и тип атрибута. Наконец, если бы для создания динамической группы использовался объектный класс <code>groupOfURLs</code> и его атрибут <code>memberURL</code> (производный от <code>labeledURI</code>), то в групповом условии ACL мы должны были бы указать их имена.</p>
+
+<p>Вооружившись этими знаниями, переопределим наш второй ACL (с индексом 1) так:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=description</code>
+<code>  by self write</code>
+<code>  by group/extensibleObject/labeledURI="cn=Developers,ou=Groups,dc=mycompany,dc=ru" write</code>
+<code>  by * read</code>
+</pre>
+
+<p>Внесём изменения в настройки базы данных и проверим получившиеся в итоге ACL:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./104-modify_group_acl.ldif</strong>
+Enter LDAP Password:
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s base -o ldif-wrap=no olcAccess</strong>
+Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=description by self write by group/extensibleObject/labeledURI="cn=Developers,ou=Groups,dc=mycompany,dc=ru" write by * read
+olcAccess: {2}to * by self write by * read
+</pre>
+
+<p>Всё в порядке. Попробуем повторить наше тестирование на предмет получения пользователями привилегий на основе их принадлежности динамической группе. Сначала протестируем права пользователей утилитой <code>slapacl</code>:</p>
+<pre class="sh">
+# <strong>slapacl -D uid=antonova,ou=People,dc=mycompany,dc=ru -b uid=sidorov,ou=People,dc=mycompany,dc=ru description</strong>
+dynlist_db_open: unable to fetch attributeDescription "dgIdentity": 17 (attribute type undefined)
+dynlist_db_open: unable to fetch attributeDescription "dgAuthz": 17 (attribute type undefined)
+authcDN: "uid=antonova,ou=people,dc=mycompany,dc=ru"
+description: read(=rscxd)
+# <strong>slapacl -D uid=ivanov,ou=People,dc=mycompany,dc=ru -b uid=sidorov,ou=People,dc=mycompany,dc=ru description</strong>
+dynlist_db_open: unable to fetch attributeDescription "dgIdentity": 17 (attribute type undefined)
+dynlist_db_open: unable to fetch attributeDescription "dgAuthz": 17 (attribute type undefined)
+authcDN: "uid=ivanov,ou=people,dc=mycompany,dc=ru"
+description: write(=wrscxd)
+</pre>
+
+<p>Как мы видим, на этот раз пользователь <em>antonova</em> (не является членом группы <em>Developers</em>) получает права на чтение атрибута <code>decsription</code> записи пользователя <em>sidorov</em>, а пользователь <em>ivanov</em> (является членом группы <em>Developers</em>)&thinsp;&mdash;&thinsp;права на изменение этого атрибута. То есть наш ACL работает.</p>
+
+<p>Убедимся в этом, проведя наше натурное испытание. Сначала попробуем применить описанный выше LDIF модификации атрибута <code>decsription</code> записи пользователя <em>sidorov</em> от имени пользователя <em>antonova</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=antonova,ou=People,dc=mycompany,dc=ru -w antonovaPassword -f ./004-modify_user_description.ldif</strong>
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+ldap_modify: Insufficient access (50)
+</pre>
+
+<p>Как и следовало ожидать, у пользователя <em>antonova</em> недостаточно прав для выполнения этого действия. Попробуем провести ту же модификацию от имени пользователя <em>ivanov</em>:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -f ./004-modify_user_description.ldif</strong>
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+</pre>
+
+<p>Модификация проведена. Убедимся в этом:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b uid=sidorov,ou=People,dc=mycompany,dc=ru description</strong>
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+description: The most talented designer
+</pre>
+
+<p>Итак, пользователь <em>ivanov</em> получил права на изменение атрибута <code>decsription</code> записи пользователя <em>sidorov</em> на основании его членства в динамической группе <em>cn=Developers,ou=Groups,dc=mycompany,dc=ru</em>, а значит, ACL доступа к каталогу OpenLDAP с групповыми условиями на основе динамических групп работают.</p>
+
+<h2 id="summary">Итоговые настройки</h2>
+<p>В ходе этого урока мы познакомились с ещё одним вариантом третьего параметра настроек наложения <code>dynlist</code>, включающим режим построения динамических групп. Также мы рассмотрели порядок составления групповых условий ACL OpenLDAP на основе динамических групп. Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так (для удобства чтения ACL мы разбили их вывод на несколько строк):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to attrs=userPassword
+  by self write
+  by anonymous auth
+  by * none
+olcAccess: {1}to dn.children="ou=People,dc=mycompany,dc=ru" attrs=description
+  by self write
+  by group/extensibleObject/labeledURI="cn=Developers,ou=Groups,dc=mycompany,dc=ru" write
+  by * read
+olcAccess: {2}to *
+  by self write
+  by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}groupOfNames labeledURI member
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 3. Классические динамические группы</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;28 декабря 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>

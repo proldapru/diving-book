@@ -24,26 +24,26 @@
 <div class="contents">
 <ul>
 <li><span class="r">Глава 1. Обзор способов конфигурации OpenLDAP</span>
-	<ul>
+<ul>
     <li><span class="r">1.1 Динамическая конфигурация cn=config</span></li>
     <li><span class="r">1.2 Конфигурационный файл slapd.conf</span></li>
     <li><span class="r">1.3 Параметры запуска slapd</span></li>
-	</ul>
+</ul>
 </li>
 <li><span class="r">Глава 2. Установка OpenLDAP</span>
-	<ul>
+<ul>
     <li><span class="r">2.1 Установка в Ubuntu Linux</span></li>
     <li><span class="r">2.2 Установка в Gentoo Linux</span></li>
     <li><span class="r">2.3 Сборка из исходных кодов</span></li>
-	</ul>
+</ul>
 </li>
 <li><a href="./begin/index.html">Глава 3. Начало работы</a>
-	<ul>
+<ul>
     <li>3.1 Перед тем как начать
-    	<ul>
+    <ul>
         <li><a href="./begin/pre-ubuntu.html">3.1.1 Ubuntu Linux</a></li>
         <li><a href="./begin/pre-gentoo.html">3.1.2 Gentoo Linux</a></li>
-    	</ul>
+    </ul>
 	</li>
     <li><a href="./begin/init.html">3.2 Инициализация каталога cn=config</a></li>
     <li><a href="./begin/module.html">3.3 Работа с модулями</a></li>
@@ -51,34 +51,50 @@
     <li><a href="./begin/schema.html">3.5 Добавление наборов схемы данных</a></li>
     <li><a href="./begin/overlay.html">3.6 Добавление наложения</a></li>
     <li><a href="./begin/more.html">3.7 Чем заняться дальше</a></li>
-	</ul>
+</ul>
 </li>
 <li><a href="./groups/index.html">Глава N. Работа с группами в OpenLDAP</a>
-	<ul>
-		<li><a href="./groups/initial_position.html">Исходное положение</a></li>
-		<li><a href="./groups/static1.html">Статические группы: групповые условия в ACL и наложение refint</a></li>
-		<li><a href="./groups/static2.html">Статические группы: наложение memberof</a></li>
-		<li><a href="./groups/static3.html">Статические группы: POSIX-группы</a></li>
-		<li><span class="r">Динамические группы</span></li>
-		<li><span class="r">Совместное применение статических и динамических групп</span></li>
-	</ul>
+<ul>
+    <li><a href="./groups/initial_position.html">Исходное положение</a></li>
+    <li><a href="./groups/static1.html">Статические группы: групповые условия в ACL и наложение refint</a></li>
+	<li><a href="./groups/static2.html">Статические группы: наложение memberof</a></li>
+	<li><a href="./groups/static3.html">Статические группы: POSIX-группы</a></li>
+	<li><a href="./groups/dynamic1.html">Динамические группы: принципы построения. Сравнение наложений dynlist и autogroup</a></li>
+	<li><a href="./groups/dynamic2.html">Динамические группы: примеры использования наложения dynlist</a>
+    <ul>
+        <li><a href="./groups/dynamic2.1.html">1. Классические динамические списки: построение списков рассылки</a></li>
+		<li><a href="./groups/dynamic2.2.html">2. Динамические списки с перезаписью типов атрибутов: построение динамических POSIX-групп</a></li>
+		<li><a href="./groups/dynamic2.3.html">3. Классические динамические группы</a></li>
+		<li><a href="./groups/dynamic2.4.html">4. Всё сразу: пример множественной настройки</a></li>
+        <li><a href="./groups/dynamic2.5.html">5. Нестандартная аутентификация</a></li>
+    </ul>
+    </li>
+    <li><a href="./groups/dynamic3.html">Динамические группы: примеры использования наложения autogroup</a>
+    <ul>
+	    <li><a href="./groups/dynamic3.1.html">1. Автоматическое построение групп пользователей</a></li>
+	    <li><a href="./groups/dynamic3.2.html">2. Автоматическое построение групп пользователей с поддержанием признака обратного членства в группе</a></li>
+    </ul>
+    </li>
+    <li><a href="./groups/mutual1.html">Совместное применение статических и динамических групп</a>
+    <ul>
+	    <li><a href="./groups/mutual1.1.html">1. Имитация наложения memberof для классических групп</a></li>
+	    <li><a href="./groups/mutual1.2.html">2. Имитация наложения memberof для POSIX-групп</a></li>
+	    <li><a href="./groups/mutual1.3.html">3. Построение динамических POSIX-групп на основе классических статических групп</a></li>
+    </ul>
+    </li>
+</ul>
 </li>
 <li><a href="./app1/index.html">Приложение 1: Соответствие директив конфигурационного файла slapd.conf атрибутам динамической конфигурации cn=config</a>
-	<ul>
-		<li><a href="./app1/overlays.html">Конфигурация наложений</a>
-			<ul>
-  			<li><a href="./app1/overlays.html#memberof">Наложение memberof</a></li>
-  			<li><a href="./app1/overlays.html#refint">Наложение refint</a></li>
-			</ul>
-		</li>
-	</ul>
+<ul>
+	<li><a href="./app1/overlays.html">Конфигурация наложений</a></li>
+</ul>
 </li>
 <li><a href="./app2/index.html">Приложение 2: Решение проблемных вопросов</a>
-	<ul>
-		<li><a href="./app2/crc32.html">Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</a></li>
-	</ul>
+<ul>
+	<li><a href="./app2/crc32.html">Восстановление контрольной суммы CRC32 LDIF-файла в конфигурации cn=config</a></li>
+</ul>
 </li>
 </ul>
 </div>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;6 августа 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;28 декабря 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>

@@ -1,0 +1,352 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" href="/pro-ldap.css" type="text/css">
+<title>Работа с группами в OpenLDAP</title>
+<script src="/pro-ldap.js"></script>
+</head>
+<body>
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 2. Динамические списки с перезаписью типов атрибутов: построение динамических POSIX-групп</p>
+<h1>2. Динамические списки с перезаписью типов атрибутов: построение динамических POSIX-групп</h1>
+<h3>Содержание</h3>
+<div class="contents">
+<ul>
+<li><a href="#formulation">Постановка задачи</a></li>
+<li><a href="#solution">Решение</a></li>
+<li><a href="#improvements">Что ещё можно сделать</a></li>
+<li><a href="#summary">Итоговые настройки</a></li>
+</ul>
+</div>
+
+<h2 id="formulation">Постановка задачи</h2>
+<p><strong>Предпосылки:</strong> В организации, сведения о которой ведутся в нашем каталоге, два отдела: <em>Developers</em> и <em>Designers</em>. Информация о принадлежности пользователя отделу фиксируется как значение атрибута <code>ou</code> в учётной записи каждого пользователя. Разграничение доступа на сервере VPN-подключений организации решено выполнить на основании принадлежности пользователей POSIX-группам соответствующих отделов.</p>
+
+<p><strong>Задача:</strong> Требуется создать POSIX-группы, постоянно отражающие актуальную структуру организации.</p>
+
+<h2 id="solution">Решение</h2>
+<p><a href="static3.html#about_posix_groups">Как мы помним</a>, POSIX-группы представляют собой записи-списки, в которых в значениях атрибута <code>memberUid</code> перечислены текстовые имена учётных записей пользователей UNIX, соответствующие тем, которые указываются в значении атрибута <code>uid</code> записей пользователей в каталоге. Как видно, имена атрибутов, содержащих нужную нам информацию, в записях пользователей и записях-списках не совпадают, и напрямую построить динамический список нужного формата не получится. Но наложение <code>dynlist</code> позволяет при построении динамических списков выполнять перезапись имён атрибутов, чем мы и воспользуемся.</p>
+
+<p>Начинать, как всегда, будем с <a href="initial_position.html">исходного положения</a> каталога. В данном примере порядок работы будет такой: настройка наложения, добавление записей динамических списков, модификация записей пользователей.</p>
+
+<h3 id="step1">Шаг 1. Настройка наложения dynlist</h3>
+<p>Первым делом нужно подгрузить модуль нашего наложения в работающий сервер <code>slapd</code>. Для этого требуется внести изменения в запись <code>cn=module{0},cn=config</code>:</p>
+<pre class="list">
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: dynlist.la</code>
+</pre>
+
+<p>Подгрузим наш модуль и убедимся, что он загружен:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./101-add_dynlist_module.ldif</strong>
+Enter LDAP Password: 
+modifying entry "cn=module{0},cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b cn=module{0},cn=config olcModuleLoad</strong>
+Enter LDAP Password: 
+dn: cn=module{0},cn=config
+olcModuleLoad: {0}back_mdb.la
+olcModuleLoad: {1}dynlist.la
+</pre>
+
+<p id="dynlist_params">Переходим к настройкам наложения. Для данного примера мы сформируем такую запись наложения с объектным классом <code>olcDynamicList</code> (дочернюю по отношению к рабочей базе данных):</p>
+<pre class="list">
+<code>dn: olcOverlay=dynlist,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcDynamicList</code>
+<code>olcOverlay: dynlist</code>
+<code>olcDLattrSet: posixGroup labeledURI memberUid:uid</code>
+</pre>
+
+<p>Параметры работы наложения задаются значением атрибута <code>olcDLattrSet</code> (строка 4). В данном случае у нас три разделённых пробелами параметра: имя объектного класса (<code>posixGroup</code>), имя типа атрибута (<code>labeledURI</code>), а также определение правила перезаписи имени атрибута (<code>memberUid:uid</code>). Назначение первых двух параметров мы подробно разбирали в <a href="dynamic2.1.html#dynlist_params">предыдущем примере</a>: это объектный класс и тип атрибута, по которым наложение <code>dynlist</code> отбирает среди результирующего набора операции поиска LDAP те записи, которые требуется дополнить динамическим содержимым. Обратите внимание, что для данного примера мы выбрали "нетипичные" для наложения <code>dynlist</code> класс и тип атрибута. Отчасти это сделано для того, чтобы продемонстрировать, что с наложением <code>dynlist</code> можно использовать любые известные серверу <code>slapd</code> классы и типы атрибутов. Другая же причина в том, что многие приложения, проверяющие права пользователей на основе сведений из каталога, понимают класс <code>posixGroup</code> как "стандартный", к тому же на нём как раз и строятся POSIX-группы.</p>
+
+<p>Наиболее интересен для нас третий параметр настройки наложения. В данном примере он представляет собой два имени атрибута, разделённых символом двоеточия. Такой синтаксис говорит о том, что наложению задаётся правило перезаписи имён атрибутов, которое формулируется так: если среди атрибутов, возвращаемых в результате вторичного поискового запроса, выполняемого с целью сбора динамического содержимого записи, будут возвращены атрибуты типа <code>uid</code>, то в них имя атрибута будет заменено на <code>memberUid</code>. Значение же атрибута останется неизменным. Простое действие, которое позволит сформировать запись-список, полностью отвечающий условию нашей задачи.</p>
+
+<p>Следует отметить, что в настройках наложения <code>dynlist</code> можно задавать несколько таких правил перезаписи, отделяя их друг от друга пробелом. Но для нашей задачи это не требуется.</p>
+
+<p>Итак, добавим нашу запись с настройками наложения и убедимся в её наличии:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=config -W -f ./102-add_dynlist_overlay.ldif</strong>
+Enter LDAP Password:
+adding new entry "olcOverlay=dynlist,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s one</strong>
+Enter LDAP Password:
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}posixGroup labeledURI memberUid:uid
+</pre>
+
+<p>Наложение стало первым (индекс 0) для нашей рабочей базы данных. Пора переходить к следующему этапу.</p>
+
+<h3 id="step2">Шаг 2. Добавление записей динамических POSIX-групп</h3>
+<p>По <a href="#formulation">условиям задачи</a> составим определения динамических списков (POSIX-групп) для наших отделов <em>Developers</em> и <em>Designers</em>, поместив их в отдельный контейнер с именем <em>PosixGroups</em>:</p>
+<pre class="list">
+<code>dn: ou=PosixGroups,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: PosixGroups</code></code>
+<code></code>
+<code>dn: cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>objectClass: labeledURIObject</code>
+<code>cn: Developers</code>
+<code>gidNumber: 10001</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Developers))</code>
+<code></code>
+<code>dn: cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>objectClass: labeledURIObject</code>
+<code>cn: Designers</code>
+<code>gidNumber: 10002</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Designers))</code>
+</pre>
+
+<p>Записи POSIX-групп строятся на структурном объектном классе <code>posixGroup</code>, его обязательные атрибуты <code>cn</code> (который мы использовали для формирования RDN) и <code>gidNumber</code> (наследие NIS для хранения числового идентификатора группы в UNIX). Условия для поиска динамического содержимого оформлены в виде LDAP URI в значениях атрибутов <code>labeledURI</code> динамических записей (строки 10 и 17). Поскольку тип атрибута <code>labeledURI</code> не входит в число обязательных или допустимых атрибутов класса <code>posixGroup</code>, для включения таких атрибутов в наши записи мы воспользовались вспомогательным объектным классом <code>labeledURIObject</code>, содержащим этот тип атрибута и позволяющим включить его в запись.</p>
+
+<p>Сами LDAP URI мало чем отличаются от подробно разобранных нами в <a href="dynamic2.1.html#step3">предыдущем примере</a> URI: согласно указанных в них критериев поиска, среди записей пользователей будут отобраны те, у которых есть признак принадлежности к конкретному отделу. Отличается только список возвращаемых атрибутов (4-й компонент URI): в данном случае из найденных записей будут извлекаться только атрибуты <code>uid</code>.</p>
+
+<p>Добавим наши записи в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_posix_groups.ldif</strong>
+Enter LDAP Password:
+adding new entry "ou=PosixGroups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Посмотрим, что получилось:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru -o ldif-wrap=no '(objectClass=posixGroup)'</strong>
+dn: cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru
+objectClass: posixGroup
+objectClass: labeledURIObject
+cn: Developers
+gidNumber: 10001
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Developers))
+
+dn: cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru
+objectClass: posixGroup
+objectClass: labeledURIObject
+cn: Designers
+gidNumber: 10002
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Designers))
+</pre>
+
+<p>А где же, собственно, атрибуты принадлежности списку <code>memberUid</code>, то есть динамическое содержимое записей? Что-то пошло не так и наложение <code>dynlist</code> не сработало? Да нет, всё так, просто в наших записях пользователей ещё нет признака принадлежности отделу.</p>
+
+<h3 id="step3">Шаг 3. Модификация учётных записей пользователей</h3>
+<p>Дополним записи пользователей признаком принадлежности к отделам. Для этого сформируем такой LDIF-файл:</p>
+<pre class="list">
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+<code></code>
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code></code>
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code></code>
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+</pre>
+
+<p>Применим его к нашему каталогу и посмотрим, в каком состоянии будут наши учётки после модификации:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./003-add_users_attributes.ldif</strong>
+Enter LDAP Password:
+modifying entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b ou=People,dc=mycompany,dc=ru -s one</strong>
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: ivanov
+cn: Ivan Ivanov
+sn: Ivanov
+ou: Developers
+
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: petrov
+cn: Petr Petrov
+sn: Petrov
+ou: Developers
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: sidorov
+cn: Sidor Sidorov
+sn: Sidorov
+ou: Designers
+
+dn: uid=antonova,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: antonova
+cn: Antonina Antonova
+sn: Antonova
+ou: Designers
+</pre>
+
+<p>Всё в порядке. А теперь ещё раз запросим наши POSIX-группы:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru -o ldif-wrap=no '(objectClass=posixGroup)'</strong>
+dn: cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru
+objectClass: posixGroup
+objectClass: labeledURIObject
+cn: Developers
+gidNumber: 10001
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Developers))
+memberUid: ivanov
+memberUid: petrov
+
+dn: cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru
+objectClass: posixGroup
+objectClass: labeledURIObject
+cn: Designers
+gidNumber: 10002
+labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Designers))
+memberUid: antonova
+memberUid: sidorov
+</pre>
+
+<p>Как видно, наше наложение успешно справилось и с задачей наполнения записей динамическим содержимым, и с перезаписью имён атрибутов: у нас получились корректные POSIX-группы с нужными атрибутами членства в них.</p>
+
+<h2 id="improvements">Что ещё можно сделать</h2>
+<p>У наложения <code>dynlist</code> есть ещё один параметр настройки, с помощью которого можно ограничить область действия наложения. Чтобы не нарушать очерёдность перечисления параметров наложения, мы будем называть его промежуточным параметром, поскольку, при необходимости, его можно указать между первым (имя объектного класса, на который срабатывает наложение) и вторым параметром (имя атрибута, в котором указаны критерии вторичного поиска). То есть, если вслед за первым параметром в настройках наложения вместо имени атрибута указан LDAP URI, то наложение будет воспринимать его как тот самый промежуточный параметр.</p>
+
+<p>Итак, промежуточный параметр представляет собой LDAP URI, с помощью компонентов которого (базовой записи, поискового диапазона и фильтра отбора) задаётся область действия наложения. При указании промежуточного параметра наложение будет применяться не ко всем записям, попавшим в результирующий набор первоначальной операции поиска, а только к подмножеству этих записей, удовлетворяющих условиям, заданным в URI этого параметра.</p>
+
+<p>Разберём применение промежуточного параметра на примере. Допустим, в ветку <em>ou=Groups,dc=mycompany,dc=ru</em> также добавляются записи, на которые будет реагировать наложение <code>dynlist</code> с <a href="#dynlist_params">указанными нами настройками</a>:</p>
+<pre class="list">
+<code>dn: cn=Developers2,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>objectClass: labeledURIObject</code>
+<code>cn: Developers2</code>
+<code>gidNumber: 10011</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Developers))</code>
+<code></code>
+<code>dn: cn=Designers2,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: posixGroup</code>
+<code>objectClass: labeledURIObject</code>
+<code>cn: Designers2</code>
+<code>gidNumber: 10012</code>
+<code>labeledURI: ldap:///ou=People,dc=mycompany,dc=ru?uid?one?(&(objectClass=inetOrgPerson)(ou=Designers))</code>
+</pre>
+
+<p>Добавим эти записи в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./004-add_posix_groups2.ldif</strong>
+Enter LDAP Password:
+adding new entry "cn=Developers2,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers2,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Проверим работу наложения <code>dynlist</code>:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru -o ldif-wrap=no '(objectClass=posixGroup)' memberUid</strong>
+dn: cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru
+memberUid: ivanov
+memberUid: petrov
+
+dn: cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru
+memberUid: antonova
+memberUid: sidorov
+
+dn: cn=Developers2,ou=Groups,dc=mycompany,dc=ru
+memberUid: ivanov
+memberUid: petrov
+
+dn: cn=Designers2,ou=Groups,dc=mycompany,dc=ru
+memberUid: antonova
+memberUid: sidorov
+</pre>
+
+<p>Наложение отработало великолепно: все четыре наших POSIX-группы дополнились динамическим содержимым.</p>
+
+<p>А теперь попытаемся ограничить область действия наложения так, чтобы динамическим содержимым дополнялись только записи в ветке <em>ou=PosixGroups,dc=mycompany,dc=ru</em>. Дополним настройки наложения промежуточным параметром:</p>
+<pre class="list">
+<code>dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>replace: olcDLattrSet</code>
+<code>olcDLattrSet: posixGroup ldap:///ou=PosixGroups,dc=mycompany,dc=ru??one? labeledURI memberUid:uid</code>
+</pre>
+
+<p>Интересующие нас изменения представлены в строке 4. В параметрах наложения между именем объектного класса (<code>posixGroup</code>) и именем типа атрибута (<code>labeledURI</code>) мы поместили LDAP URI&thinsp;&mdash;&thinsp;тот самый промежуточный параметр. Согласно критериям, заданным компонентами этого URI, наложение будет обрабатывать только записи, непосредственно дочерние (диапазон <em>one</em>) записи <em>ou=PosixGroups,dc=mycompany,dc=ru</em>. Поисковый фильтр не задан, поэтому будут рассматриваться все записи, отвечающие первым двум критериям.</p>
+
+<p>Применим наши изменения и проверим:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./103-modify_dynlist_overlay.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -D cn=config -W -b olcDatabase={1}mdb,cn=config -s one -o ldif-wrap=no</strong>
+Enter LDAP Password:
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}posixGroup ldap:///ou=PosixGroups,dc=mycompany,dc=ru??one? labeledURI memberUid:uid
+</pre>
+
+<p>Теперь посмотрим, как это повлияло на работу нашего наложения:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru -o ldif-wrap=no '(objectClass=posixGroup)' memberUid</strong>
+dn: cn=Developers,ou=PosixGroups,dc=mycompany,dc=ru
+memberUid: ivanov
+memberUid: petrov
+
+dn: cn=Designers,ou=PosixGroups,dc=mycompany,dc=ru
+memberUid: antonova
+memberUid: sidorov
+
+dn: cn=Developers2,ou=Groups,dc=mycompany,dc=ru
+
+dn: cn=Designers2,ou=Groups,dc=mycompany,dc=ru
+</pre>
+
+<p>Как видно, записи в ветке <em>ou=Groups,dc=mycompany,dc=ru</em> не получили динамического содержимого, следовательно, наши ограничения работают.</p>
+
+<h2 id="summary">Итоговые настройки</h2>
+<p>В ходе этого урока мы познакомились с одним из вариантов третьего параметра настроек наложения <code>dynlist</code>, отвечающим за перезапись имён атрибутов при построении динамического содержимого. Кроме того, была рассмотрена возможность установки ограничений на область действия наложения с помощью промежуточного параметра в настройках. Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
+Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to * by self write by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}posixGroup ldap:///ou=PosixGroups,dc=mycompany,dc=ru??one? labeledURI memberUid:uid
+</pre>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 2. Динамические списки с перезаписью типов атрибутов: построение динамических POSIX-групп</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2018 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;28 декабря 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+</body></html>
