@@ -8,10 +8,9 @@
 <script src="/pro-ldap.js"></script>
 </head>
 <body>
-<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 5. Нестандартная аутентификация</p>
-<h1>5. Нестандартная аутентификация</h1>
-<div align="center"><img src="../constr.gif" alt="В разработке"></div>
-<!--
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 5. Нестандартная авторизация</p>
+<h1>5. Нестандартная авторизация</h1>
+
 <h3>Содержание</h3>
 <div class="contents">
 <ul>
@@ -23,27 +22,733 @@
 </div>
 
 <h2 id="formulation">Постановка задачи</h2>
-<p><strong>Предпосылки:</strong></p>
+<p><strong>Предпосылки:</strong> В организации, сведения о которой ведутся в нашем каталоге, два отдела: <em>Developers</em> и <em>Designers</em>. Информация о принадлежности пользователя отделу фиксируется как значение атрибута <code>ou</code> в учётной записи каждого пользователя. На почтовом сервере организации обслуживаются почтовые ящики пользователей, адреса электронной почты фиксируются как значение атрибута <code>mail</code> в учётной записи каждого пользователя.</p>
 
-<p><strong>Задача:</strong></p>
+<p>Принятая в организация политика разграничения доступа к каталогу строго ограничивает доступ к учётным записям пользователей: прошедший аутентификацию пользователь может получить доступ только к своей учётной записи, анонимный доступ к учётным записям запрещён.</p>
+
+<p><strong>Задача:</strong> Требуется создать списки рассылки, которые будут использоваться почтовым сервером для организации рассылки писем всем сотрудникам организации и отдельно сотрудникам каждого подразделения. Кроме того, для разграничения доступа различных приложений требуется организовать объекты классических групп для имеющихся отделов. Списки рассылки и групповые объекты должны постоянно отражать актуальную структуру организации.</p>
 
 <h2 id="solution">Решение</h2>
+<p>Как и всегда, начинать будем с <a href="initial_position.html">исходного положения</a> каталога. Сначала мы должны привести каталог в соответствие выдвинутым условиям задачи, то есть дополнить учётные записи пользователей требуемыми атрибутами и модифицировать условия получения доступа к этим учётным записям (иными словами, привести в соответствие ACL). Затем мы настроим наложение <code>dynlist</code>, предварительно загрузив необходимые для его работы данные и динамический модуль. Наконец, введём в каталог динамические объекты списков и групп, дополнительные настройки авторизации которых позволят решить поставленную задачу.</p>
 
-<h3 id="step1">Шаг 1. Настройка наложения dynlist</h3>
+<h3 id="step1">Шаг 1. Приведение каталога в соответствие условиям задачи</h3>
+<p>Данный шаг состоит из двух этапов. Сначала нужно дополнить учётные записи каталога перечисленными в предпосылках к задаче атрибутами с признаком принадлежности сотрудника к тому или иному отделу, а также адресом электронной почты. Для этого сформируем такой LDIF-файл:</p>
 
-<h3 id="step2">Шаг 2. Добавление записей динамических POSIX-групп</h3>
+<pre class="list">
+<code>dn: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+<code>-</code>
+<code>add: mail</code>
+<code>mail: antonova@mycompany.ru</code>
+<code></code>
+<code>dn: uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code>-</code>
+<code>add: mail</code>
+<code>mail: ivanov@mycompany.ru</code>
+<code></code>
+<code>dn: uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Developers</code>
+<code>-</code>
+<code>add: mail</code>
+<code>mail: petrov@mycompany.ru</code>
+<code></code>
+<code>dn: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: ou</code>
+<code>ou: Designers</code>
+<code>-</code>
+<code>add: mail</code>
+<code>mail: sidorov@mycompany.ru</code>
+</pre>
 
-<h3 id="step3">Шаг 3. Модификация учётных записей пользователей</h3>
+<p>Применим его и посмотрим, что получилось:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./002-add_users_attributes.ldif</strong>
+Enter LDAP Password:
+modifying entry "uid=antonova,ou=People,dc=mycompany,dc=ru"
 
-<h2 id="improvements">Что ещё можно сделать</h2>
+modifying entry "uid=ivanov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=petrov,ou=People,dc=mycompany,dc=ru"
+
+modifying entry "uid=sidorov,ou=People,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -b dc=mycompany,dc=ru '(objectClass=inetOrgPerson)'</strong>
+dn: uid=antonova,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: antonova
+cn: Antonina Antonova
+sn: Antonova
+ou: Designers
+mail: antonova@mycompany.ru
+
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: ivanov
+cn: Ivan Ivanov
+sn: Ivanov
+ou: Developers
+mail: ivanov@mycompany.ru
+
+dn: uid=petrov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: petrov
+cn: Petr Petrov
+sn: Petrov
+ou: Developers
+mail: petrov@mycompany.ru
+
+dn: uid=sidorov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: sidorov
+cn: Sidor Sidorov
+sn: Sidorov
+ou: Designers
+mail: sidorov@mycompany.ru
+</pre>
+
+<p>Наши учётные записи готовы. Второй этап&thinsp;&mdash;&thinsp;ограничить доступ к ним согласно условиям задачи, то есть чтобы прошедший аутентификацию пользователь мог получить доступ только к своей учётной записи, а анонимный доступ к учётным записям был бы запрещён.</p>
+
+<p>Для этого нам нужно внести изменения в настройки нашей рабочей базы данных <code>mdb</code>, добавив к двум имеющимся у нас ACL ещё один:</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.one="ou=People,dc=mycompany,dc=ru"</code>
+<code>  by self write</code>
+<code>  by * none</code>
+</pre>
+
+<p>Как видно, ограничения коснутся записей каталога, непосредственно дочерних по отношению к контейнеру <em>ou=People,dc=mycompany,dc=ru</em> (условие <code>to</code> в строке 4), в котором хранятся учётки пользователей. При подключении к каталогу от имени какого-либо пользователя к своей учётной записи он будет иметь полный доступ (условие <code>by</code> в строке 5), все остальные записи будут для него недоступны. Также отказано в доступе к учётным записям будет и в случае анонимного подключения к каталогу. Поскольку данный ACL имеет X-ORDERED-индекс 1 (то есть должен оказаться вторым), он займёт место между двумя уже имеющимися правилами в настройках рабочей базы данных.</p>
+
+<p>Добавим наш ACL и выведем список всех имеющихся:</p>
+
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./101-add_people_branch_acl.ldif</strong>
+Enter LDAP Password:
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config olcAccess</strong>
+Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to dn.one="ou=People,dc=mycompany,dc=ru" by self write by * none
+olcAccess: {2}to * by self write by * read
+</pre>
+
+<p>Отлично, все наши ACL на месте. Проверим работу установленных ограничений, для этого попробуем получить доступ к ветке <em>ou=People,dc=mycompany,dc=ru</em> сначала анонимно, а потом от имени одной из имеющихся учётных записей:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b ou=People,dc=mycompany,dc=ru -s one</strong>
+$ <strong>ldapsearch -xLLL -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -b ou=People,dc=mycompany,dc=ru -s one</strong>
+dn: uid=ivanov,ou=People,dc=mycompany,dc=ru
+objectClass: inetOrgPerson
+uid: ivanov
+cn: Ivan Ivanov
+sn: Ivanov
+userPassword:: aXZhbm92UGFzc3dvcmQ=
+ou: Developers
+mail: ivanov@mycompany.ru
+</pre>
+
+<p>Как и ожидалось, анонимный доступ к <em>ou=People,dc=mycompany,dc=ru</em> запрещён, а пользователь получает доступ лишь к своей учётке (в том числе и к своему паролю, согласно первому ACL в списке). Условия нашей задачи соблюдаются, можно переходить ко второму шагу.</p>
+
+<h3 id="step2">Шаг 2. Добавление и настройка наложения dynlist</h3>
+
+<p>Как и в предыдущих уроках, для организации работы с динамическими объектами (группами и списками) нам нужно подгрузить динамический модуль наложения и добавить запись настройки самого наложения к рабочей базе данных <code>mdb</code>. Однако, в данном случае для решения задачи обхода имеющихся ограничений контроля доступа нам потребуется также расширить схему данных каталога специальными атрибутами, которые использует в своей работе наложение <code>dynlist</code>.</p>
+
+<p>В <a href="dynamic2.1.html#step2">одном из примеров</a> мы уже подгружали входящий в поставку OpenLDAP LDIF-файл dyngroup.ldif, как раз содержащий требуемые для нашего наложения элементы схемы данных. Если внимательно посмотреть на содержимое <a href="dynamic2.1.html#dyngroup_schema">добавляемого набора схемы</a>, то, кроме объектного класса <code>groupOfURLs</code> с атрибутом <code>memberURL</code>, мы увидим ещё объектный класс <code>dgIdentityAux</code> с атрибутами <code>dgIdentity</code> и <code>dgAuthz</code>, которые нам и потребуются в ходе этого урока.</p>
+
+<p>В итоге для настройки slapd мы сформируем такой LDIF-файл:</p>
+<pre class="list">
+<code>include: file:///etc/ldap/schema/dyngroup.ldif</code>
+<code></code>
+<code>dn: cn=module{0},cn=config</code>
+<code>changetype: modify</code>
+<code>add: olcModuleLoad</code>
+<code>olcModuleLoad: dynlist.la</code>
+<code></code>
+<code>dn: olcOverlay=dynlist,olcDatabase={1}mdb,cn=config</code>
+<code>objectClass: olcDynamicList</code>
+<code>olcOverlay: dynlist</code>
+<code>olcDLattrSet: {0}groupOfURLs memberURL</code>
+<code>olcDLattrSet: {1}organizationalRole memberURL roleOccupant</code>
+</pre>
+
+<p>В строке 1 мы подгружаем требуемый набор схемы данных <code>dyngroup.ldif</code>, в строках 3-6&thinsp;&mdash;&thinsp;динамический модуль наложения <code>dynlist</code>. В оставшихся строках 8-12 запись с настройками наложения добавляется в качестве дочерней к записи нашей рабочей базы данных. Как видно, настраивается два типа динамических объектов: списки рассылки будут организованы на объектном классе <code>groupOfURLs</code>, параметры поиска и формирования динамического содержимого будут указаны в значении атрибута <code>memberURL</code>, а динамические группы будут строиться на объектном классе <code>organizationalRole</code> (атрибут членства в группе&thinsp;&mdash;&thinsp;<code>roleOccupant</code>), причём параметры поиска динамического содержимого также будут указаны в значении атрибута <code>memberURL</code>.</p>
+
+<p>Попробуем применить указанные настройки и проверить результат:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=config -W -f ./102-add_dynlist.ldif</strong>
+Enter LDAP Password:
+adding new entry "cn=dyngroup,cn=schema,cn=config"
+
+modifying entry "cn=module{0},cn=config"
+
+adding new entry "olcOverlay=dynlist,olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b cn=schema,cn=config '(cn=*dyngroup)' dn</strong>
+Enter LDAP Password:
+dn: cn={4}dyngroup,cn=schema,cn=config
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b cn=module{0},cn=config olcModuleLoad</strong>
+Enter LDAP Password:
+dn: cn=module{0},cn=config
+olcModuleLoad: {0}back_mdb.la
+olcModuleLoad: {1}dynlist.la
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config -s one</strong>
+Enter LDAP Password: 
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}groupOfURLs memberURL
+olcDlAttrSet: {1}organizationalRole memberURL roleOccupant
+</pre>
+
+<p>Всё на месте, пора переходить к следующему шагу.</p>
+
+<h3 id="step3">Шаг 3. Добавление и настройка динамических объектов в рабочем каталоге</h3>
+
+<p>Начнём с того, что мы уже не раз делали: добавим в рабочий каталог объекты динамических списков рассылки (в отдельный контейнер) и групп. Сформируем такой LDIF-файл:</p>
+<pre class="list">
+<code># Контейнер для списков рассылки</code>
+<code>dn: ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: MailingLists</code>
+<code></code>
+<code># Списки рассылки</code>
+<code>dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfURLs</code>
+<code>cn: All</code>
+<code>memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(objectClass=inetOrgPerson)</code>
+<code></code>
+<code>dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfURLs</code>
+<code>cn: Developers</code>
+<code>memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Developers))</code>
+<code></code>
+<code>dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>objectClass: groupOfURLs</code>
+<code>cn: Designers</code>
+<code>memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Designers))</code>
+<code></code>
+<code># Группы отделов</code>
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>objectClass: extensibleObject</code>
+<code>cn: Developers</code>
+<code>memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))</code>
+<code></code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalRole</code>
+<code>objectClass: extensibleObject</code>
+<code>cn: Designers</code>
+<code>memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))</code>
+</pre>
+
+<p>Динамические объекты сформированы так, чтобы их объектные классы и атрибуты с параметрами поиска динамического содержимого удовлетворяли заданным нами настройкам наложения <code>dynlist</code>. Добавим наши объекты в каталог:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./003-add_dynamic_objects.ldif</strong>
+Enter LDAP Password:
+adding new entry "ou=MailingLists,dc=mycompany,dc=ru"
+
+adding new entry "cn=All,ou=MailingLists,dc=mycompany,dc=ru"
+
+adding new entry "cn=Developers,ou=MailingLists,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers,ou=MailingLists,dc=mycompany,dc=ru"
+
+adding new entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+adding new entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Динамические объекты добавлены, попробуем просмотреть их:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru '(memberURL=*)'</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: All
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(objectClass=inetOrgPerson)
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Developers))
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Designers))
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))
+</pre>
+
+<p>Всё в порядке, за исключением одной маленькой детали: в записях нет динамического содержимого. И проблема тут не в ошибках настройки, а в принятой в компании политике доступа к учётным записям пользователей (тот самый ACL, который был добавлен на <a href="#step1">первом шаге</a>). В этом легко можно убедиться, выполнив поиск не анонимно, а от имени одного из пользователей:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword -b dc=mycompany,dc=ru '(memberURL=*)'</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: All
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(objectClass=inetOrgPerson)
+mail: ivanov@mycompany.ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Developers))
+mail: ivanov@mycompany.ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Designers))
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))
+</pre>
+
+<p>Обратите внимание на динамические атрибуты, появившиеся в списках рассылки <em>All</em> и <em>Developers</em>, а также в группе <em>Developers</em>, они отражают информацию только по самому пользователю, подключившемуся к каталогу&thinsp;&mdash;&thinsp;всё согласно настроек контроля доступа.</p>
+
+<p>Конечно, это ограничение можно обойти, подключаясь к каталогу от имени <code>rootDN</code> этого каталога. Но, согласитесь, такое решение не выглядит оптимальным. Как раз на случай наличия в рабочем окружении сложных настроек контроля доступа в наложении <code>dynlist</code> предусмотрен механизм нестандартной авторизации при выполнении поиска и формирования динамического содержимого. Суть её изложена в <a href="//pro-ldap.ru/tr/man/slapo-dynlist.5.html">man-странице наложения dynlist</a>, выдержку из которой мы приведём здесь:
+<blockquote style="font-style:italic">По умолчанию поиск по URI и последующее наполнение записи выполняется с использованием идентификационной сущности текущего пользователя LDAP. Эту идентификационную сущность можно переопределить путём указания в атрибуте dgIdentity записи группы DN другого пользователя LDAP. В этом случае при поиске по URI и наполнении объекта будет использоваться идентификационная сущность пользователя, указанного в dgIdentity. Если в качестве значения dgIdentity задана строка нулевой длины, наполнение записи будет выполняться анонимно. Обратите внимание, что атрибут dgIdentity определён в наборе схемы данных dyngroup, который должен быть загружен перед тем, как использовать возможность авторизации с dgIdentity.</blockquote>
+</p>
+
+<p>Всё просто: если у нас имеется пользователь с требуемыми правами доступа к каталогу, то DN этого пользователя можно указать в качестве значения атрибута <code>dgIdentity</code> в записи динамического объекта, и тогда поиск динамического содержимого будет осуществляться от имени данного уполномоченного пользователя.</p>
+
+<p>Попробуем воплотить это в жизнь. Для начала нам нужен некий пользователь с правами на доступ к контейнеру <em>ou=People,dc=mycompany,dc=ru</em>. Внесём изменения в списки контроля доступа к нашему рабочему каталогу, дополнив второй ACL правами на чтение для специального пользователя <em>dynlistReader</em> (строка 8):</p>
+<pre class="list">
+<code>dn: olcDatabase={1}mdb,cn=config</code>
+<code>changetype: modify</code>
+<code>delete: olcAccess</code>
+<code>olcAccess: {1}</code>
+<code>-</code>
+<code>add: olcAccess</code>
+<code>olcAccess: {1}to dn.one="ou=People,dc=mycompany,dc=ru"</code>
+<code>  by dn.exact="cn=dynlistReader,ou=System,dc=mycompany,dc=ru" read</code>
+<code>  by self write</code>
+<code>  by * none</code>
+</pre>
+
+<p>Внесём изменения в конфигурационный каталог <code>cn=config</code> и посмотрим, что получилось:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=config -W -f ./103-replace_people_branch_acl.ldif</strong>
+Enter LDAP Password: 
+modifying entry "olcDatabase={1}mdb,cn=config"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config -s base olcAccess</strong>
+Enter LDAP Password: 
+dn: olcDatabase={1}mdb,cn=config
+olcAccess: {0}to attrs=userPassword by self write by anonymous auth by * none
+olcAccess: {1}to dn.one="ou=People,dc=mycompany,dc=ru" by dn.exact="cn=dynlistReader,ou=System,dc=mycompany,dc=ru" read by self write by * none
+olcAccess: {2}to * by self write by * read
+</pre>
+
+<p>Обратите внимание, что запись в каталоге для пользователя <code>cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code> мы не заводили, поэтому подключиться нормальным образом от имени этого пользователя к каталогу мы не сможем. Тем не менее у этой фиктивной записи есть права на чтение, и мы можем этим воспользоваться.</p>
+
+<p>Сформируем LDIF-файл для модификации наших динамических объектов:</p>
+<pre class="list">
+<code>dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectClass</code>
+<code>objectClass: dgIdentityAux</code>
+<code>-</code>
+<code>add: dgIdentity</code>
+<code>dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectClass</code>
+<code>objectClass: dgIdentityAux</code>
+<code>-</code>
+<code>add: dgIdentity</code>
+<code>dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: objectClass</code>
+<code>objectClass: dgIdentityAux</code>
+<code>-</code>
+<code>add: dgIdentity</code>
+<code>dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgIdentity</code>
+<code>dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgIdentity</code>
+<code>dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Итак, мы дополнили каждую запись динамического объекта сведениями о том, что мы хотим проводить поиск в каталоге динамического содержимого от имени (с правами) записи <code>cn=dynlistReader,ou=System,dc=mycompany,dc=ru</code>. Обратите внимание, что в объектах динамических списков рассылки для добавления нового атрибута нам пришлось подключать вспомогательный объектный класс <code>dgIdentityAux</code>, который входит в набор схемы данных <code>dyngroup</code> и содержит требуемый нам тип атрибута <code>dgIdentity</code>. Для записей же динамических групп это не потребовалось, поскольку они уже включали специальный вспомогательный класс <a href="//pro-ldap.ru/tr/rfc/rfc4512.html#section-4.3">extensibleObject</a>, позволяющий добавить в запись любой известный LDAP-серверу пользовательский атрибут.</p>
+
+<p>Применим наши изменения:</p>
+<pre class="sh">
+$ ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./004-mod_dynamic_objects_add_dgIdentity.ldif
+Enter LDAP Password: 
+modifying entry "cn=All,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developers,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Проверим, что получилось:</p>
+<pre class="sh">
+$ ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru '(memberURL=*)'
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+objectClass: dgIdentityAux
+cn: All
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(objectClass=inetOrgPerson)
+dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru
+mail: antonova@mycompany.ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+mail: sidorov@mycompany.ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+objectClass: dgIdentityAux
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Developers))
+dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+objectClass: groupOfURLs
+objectClass: dgIdentityAux
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru?mail?one?(&(objectClass=inetOrgPerson)(ou=Designers))
+dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru
+mail: antonova@mycompany.ru
+mail: sidorov@mycompany.ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Developers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Developers))
+dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+objectClass: organizationalRole
+objectClass: extensibleObject
+cn: Designers
+memberURL: ldap:///ou=People,dc=mycompany,dc=ru??one?(&(objectClass=inetOrgPerson)(ou=Designers))
+dgIdentity: cn=dynlistReader,ou=System,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Как видите, наша нестандартная авторизация работает, и даже выполняя анонимный поисковый запрос, мы получаем желаемое динамическое содержимое. При этом ограничения на доступ к учётным записям пользователей остаются в силе (анонимный поиск в ветке <em>ou=People,dc=mycompany,dc=ru</em> не даёт результата):</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -b ou=People,dc=mycompany,dc=ru -s one</strong>
+</pre>
+
+<p>Таким образом, поставленная задача успешно решена.</p>
+
+<h2 id="improvements">Что ещё можно сделать. "Вторичная" авторизация, или ограничение на поиск динамического содержимого</h2>
+<p>Функционал нестандартной авторизации наложения <code>dynlist</code> позволяет устанавливать собственные ограничения на поиск динамического содержимого. Ещё раз обратимся к разделу "Авторизация" <a href="//pro-ldap.ru/tr/man/slapo-dynlist.5.html">man-страницы наложения</a>:
+<blockquote style="font-style:italic">Если в записи группы кроме атрибута dgIdentity присутствует атрибут dgAuthz, его значение используется для определения того, какие идентификационные сущности авторизованы использовать для наполнения этой группы идентификационную сущность, указанную в атрибуте dgIdentity. Значения в атрибуте dgAuthz должны соответствовать экспериментальному синтаксису OpenLDAP authz.</blockquote></p>
+
+<p>То есть, можно определять конкретные идентификационные сущности, которые будут уполномочены (авторизованы) воспользоваться нестандартной авторизацией при поиске динамического содержимого. Идентификационные сущности можно задавать различными путями в соответствии с синтаксисом  OpenLDAP authz, определение которого можно найти в описании директивы <code>authz-policy</code> в <a href="//pro-ldap.ru/tr/man/slapd.conf.5.html">man-странице slapd.conf(5)</a>. Для нашего примера мы воспользуемся самым простым вариантом: будем задавать идентификационные сущности в виде DN учётной записи пользователя.</p>
+
+<p>Для начала поставим простой эксперимент: попробуем ограничить доступ к возможности построения динамического содержимого списков рассылки. Составим следующий LDIF-файл:</p>
+<pre class="list">
+<code>dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgAuthz</code>
+<code>dgAuthz: dn:*</code>
+<code></code>
+<code>dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgAuthz</code>
+<code>dgAuthz: dn:uid=ivanov,ou=People,dc=mycompany,dc=ru</code>
+<code>dgAuthz: dn:uid=petrov,ou=People,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgAuthz</code>
+<code>dgAuthz: uid=antonova,ou=People,dc=mycompany,dc=ru</code>
+<code>dgAuthz: uid=sidorov,ou=People,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Мы добавляем в записи динамических списков атрибут <code>dgAuthz</code>. Для списка <em>All</em> в значении этого атрибута мы указываем специальную конструкцию <code>dn:*</code> (строка 4). Согласно синтаксису <code>authz</code>, она совпадает с любым неанонимным DN подключения. Для списков отделов мы ограничили доступ к возможности построения динамического содержимого сотрудниками этих отделов (строки 9-10 и 15-16).</p>
+
+<p>Применим изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./005-mod_dynamic_objects_add_dgAuthz.ldif</strong>
+Enter LDAP Password:
+modifying entry "cn=All,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developers,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=MailingLists,dc=mycompany,dc=ru"
+</pre>
+
+<p>Теперь попробуем получить содержимое наших динамических объектов (и списков, и групп). Сначала сделаем это анонимно:</p>
+<pre class="sh">
+$ ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru '(dgIdentity=*)' mail roleOccupant
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Как видно, группы (где мы не накладывали ограничений) продолжают наполняться динамическим содержимым, а списки&thinsp;&mdash;&thinsp;нет. Теперь попробуем выполнить поиск от имени конкретного пользователя:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword '(dgIdentity=*)' mail roleOccupant</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+mail: antonova@mycompany.ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+mail: sidorov@mycompany.ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Поскольку поиск у нас неанонимный, то список <em>All</em> получил динамическое содержимое. Также получил динамическое содержимое и список <em>Developers</em>, где DN пользователя <em>ivanov</em> (от имени которого выполнялся поиск) явно указано в значении атрибута <code>dgAuthz</code>. А вот список <em>Designers</em> не получил, поскольку среди значений атрибута <code>dgAuthz</code> записи этого списка не было перечислено DN пользователя <em>ivanov</em>. Как и в предыдущем случае, обе динамические группы (на которые не накладывалось дополнительных ограничений) динамическое содержимое получили. Таким образом, ограничения наложения <code>dynlist</code> на возможность выполнения поиска динамического содержимого только уполномоченными на это идентификационными сущностями работают, как заявлено.</p>
+
+<p>В финале этого урока рассмотрим более жизнеспособный пример. Допустим, мы хотим оставить в силе действующий в компании запрет на доступ к учётным записям пользователей, а также не хотим, чтобы пользователи, подключаясь к каталогу от имени своей учётной записи, могли косвенным образом получить информацию о принадлежности сотрудников подразделениям по динамическому содержимому списков рассылки и групп. С другой стороны, нам необходимо обеспечить работоспособность того программного обеспечения, которое строит свою работу на основании этих динамических списков и групп. В этом случае мы можем завести специальные учётные записи для чтения содержимого динамических объектов (отдельную для почтового сервера, отдельную для приложений, которым требуется информация по группам пользователей) и предоставить в динамических объектах права на поиск динамического содержимого именно этим учётным записям.</p>
+
+<p>Итак, создадим простейшие учётные записи, содержащие только имя пользователя и пароль, в специальном контейнере <em>ou=System,dc=mycompany,dc=ru</em>. Этот контейнер мы уже применяли для наших "фиктивных" учёток (<code>rootDN</code> и <em>dynlistReader</em>), пришла пора создать его явно:</p>
+<pre class="list">
+<code>dn: ou=System,dc=mycompany,dc=ru</code>
+<code>objectClass: organizationalUnit</code>
+<code>ou: System</code>
+<code></code>
+<code>dn: cn=mailerReader,ou=System,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>cn: mailerReader</code>
+<code>sn: mailerReader</code>
+<code>userPassword: mailerReaderPassword</code>
+<code></code>
+<code>dn: cn=rolesReader,ou=System,dc=mycompany,dc=ru</code>
+<code>objectClass: person</code>
+<code>cn: rolesReader</code>
+<code>sn: rolesReader</code>
+<code>userPassword: rolesReaderPassword</code>
+</pre>
+
+<p>Добавим наши записи в каталог и убедимся в их наличии:</p>
+<pre class="sh">
+$ <strong>ldapadd -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./006-add_system_users.ldif</strong>
+Enter LDAP Password:
+adding new entry "ou=System,dc=mycompany,dc=ru"
+
+adding new entry "cn=mailerReader,ou=System,dc=mycompany,dc=ru"
+
+adding new entry "cn=rolesReader,ou=System,dc=mycompany,dc=ru"
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b ou=System,dc=mycompany,dc=ru</strong>
+dn: ou=System,dc=mycompany,dc=ru
+objectClass: organizationalUnit
+ou: System
+
+dn: cn=rolesReader,ou=System,dc=mycompany,dc=ru
+objectClass: person
+cn: rolesReader
+sn: rolesReader
+
+dn: cn=mailerReader,ou=System,dc=mycompany,dc=ru
+objectClass: person
+cn: mailerReader
+sn: mailerReader
+</pre>
+
+<p>Ну а теперь нам осталось внести изменения в записи динамических объектов. В случае динамических списков рассылки мы заменим значения атрибута <code>dgAuthz</code> на DN пользователя <em>mailerReader</em>, а в динамические группы, в которых до этого не было данного атрибута, мы просто добавим его, указав в значении DN пользователя <em>rolesReader</em>:</p>
+<pre class="list">
+<code>dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: dgAuthz</code>
+<code>dgAuthz: dn:cn=mailerReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: dgAuthz</code>
+<code>dgAuthz: dn:cn=mailerReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>replace: dgAuthz</code>
+<code>dgAuthz: dn:cn=mailerReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgAuthz</code>
+<code>dgAuthz: dn:cn=rolesReader,ou=System,dc=mycompany,dc=ru</code>
+<code></code>
+<code>dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru</code>
+<code>changetype: modify</code>
+<code>add: dgAuthz</code>
+<code>dgAuthz: dn:cn=rolesReader,ou=System,dc=mycompany,dc=ru</code>
+</pre>
+
+<p>Применим данные изменения:</p>
+<pre class="sh">
+$ <strong>ldapmodify -x -D cn=manager,ou=System,dc=mycompany,dc=ru -W -f ./007-mod_dynamic_objects_replace_dgAuthz.ldif</strong>
+Enter LDAP Password:
+modifying entry "cn=All,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developers,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=MailingLists,dc=mycompany,dc=ru"
+
+modifying entry "cn=Developers,ou=Groups,dc=mycompany,dc=ru"
+
+modifying entry "cn=Designers,ou=Groups,dc=mycompany,dc=ru"
+</pre>
+
+<p>Нам осталось проверить правильность настроек контроля доступа при поиске и формировании динамического содержимого. Для этого выполним три поисковых запроса: от имени одного из сотрудников компании и от имени двух заведённых нами специальных учётных записей:</p>
+<pre class="sh">
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru -D uid=ivanov,ou=People,dc=mycompany,dc=ru -w ivanovPassword '(dgIdentity=*)' mail roleOccupant</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru -D cn=mailerReader,ou=System,dc=mycompany,dc=ru -w mailerReaderPassword '(dgIdentity=*)' mail roleOccupant</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+mail: antonova@mycompany.ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+mail: sidorov@mycompany.ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+mail: ivanov@mycompany.ru
+mail: petrov@mycompany.ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+mail: antonova@mycompany.ru
+mail: sidorov@mycompany.ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+
+$ <strong>ldapsearch -xLLL -o ldif-wrap=no -b dc=mycompany,dc=ru -D cn=rolesReader,ou=System,dc=mycompany,dc=ru -w rolesReaderPassword '(dgIdentity=*)' mail roleOccupant</strong>
+dn: cn=All,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=MailingLists,dc=mycompany,dc=ru
+
+dn: cn=Developers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=ivanov,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=petrov,ou=People,dc=mycompany,dc=ru
+
+dn: cn=Designers,ou=Groups,dc=mycompany,dc=ru
+roleOccupant: uid=antonova,ou=People,dc=mycompany,dc=ru
+roleOccupant: uid=sidorov,ou=People,dc=mycompany,dc=ru
+</pre>
+
+<p>Итак, мы убедились, что наш штатный пользователь не имеет прав на поиск и построение динамического содержимого, а каждый из специальных пользователей имеет возможность строить и получать динамическое содержимое только своей части динамических объектов. Всё работает именно так, как нам и требовалось.</p>
 
 <h2 id="summary">Итоговые настройки</h2>
-<p>Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так:</p>
+<p>В ходе этого урока мы рассмотрели, как средствами наложения <code>dynlist</code> можно частично (в рамках задачи поиска и построения динамического содержимого динамических объектов) обходить установленные на уровне настроек каталога ограничения на доступ к объектам каталога. Кроме того, мы увидели и обратную возможность: средствами того же наложения установить дополнительные ограничения путём выдачи полномочий лишь определённым идентификационным сущностям выполнять поиск и построение динамического содержимого динамических объектов. В этой связи нужно отметить несколько моментов:
+<ol>
+<li>При обнаружении в каталоге записей, которые должны быть обработаны наложением <code>dynlist</code>, всегда предпринимается попытка поиска в них атрибутов <code>dgIdentity</code> и <code>dgAuthz</code>, независимо от того, определялись ли они в записи и был ли вообще загружен набор схемы данных <code>dyngroup</code>. То есть обработка этих атрибутов&thinsp;&mdash;&thinsp;постоянная часть функционала наложения.</li>
+<li>Если попытаться определить только значения атрибута <code>dgAuthz</code>, не задавая при этом значений <code>dgIdentity</code>, например, когда динамическое содержимое и так заполняется, а хочется как раз наложить ограничение на его построение, то ничего не выйдет: наложение <code>dynlist</code> не будет отдельно обрабатывать атрибуты <code>dgAuthz</code>. Это ограничение функционала довольно просто обойти: достаточно задать в записи динамического объекта атрибут <code>dgIdentity</code> с каким-нибудь фиктивным DN, например <code>cn=dymmy</code>, и наложение начнёт обрабатывать значения атрибутов <code>dgAuthz</code>.</li>
+<li>В отличие от ACL, которые задаются на уровне конфигурационного каталога <code>cn=config</code> и требуют соответствующих прав на внесение изменений в данный каталог, функционал авторизации наложения <code>dynlist</code> настраивается на уровне рабочего каталога и любой пользователь, имеющий права на запись в рабочем каталоге, может установить/поменять атрибуты динамических объектов, тем самым задавая дополнительные права и ограничения на построение динамического содержимого. Администраторам рабочего каталога следует помнить об этом и принимать адекватные меры защиты.</li>
+<li>На уровне ACL можно задать ограничения на вывод атрибутов <code>dgIdentity</code> и <code>dgAuthz</code>, также как <a href="dynamic2.4.html#improvements">на прошлом уроке</a> мы ограничивали доступ к атрибуту <code>labeledURI</code>. На работу наложения сокрытие этих атрибутов не повлияет.</li>
+</ol></p>
+
+<p>Итоговые настройки каталога <em>dc=mycompany,dc=ru</em> выглядят так (для удобства чтения ACL мы разбили их вывод на несколько строк):</p>
 <pre class="sh">
 $ <strong>ldapsearch -xLLL -o ldif-wrap=no -D cn=config -W -b olcDatabase={1}mdb,cn=config</strong>
 Enter LDAP Password:
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcDbDirectory: /data/openldap-experiments/diving/010-groups-dynamic2-5/var/lib/ldap/dc=mycompany,dc=ru
+olcSuffix: dc=mycompany,dc=ru
+olcAccess: {0}to attrs=userPassword
+  by self write
+  by anonymous auth
+  by * none
+olcAccess: {1}to dn.one="ou=People,dc=mycompany,dc=ru"
+  by dn.exact="cn=dynlistReader,ou=System,dc=mycompany,dc=ru" read
+  by self write
+  by * none
+olcAccess: {2}to *
+  by self write
+  by * read
+olcRootDN: cn=manager,ou=System,dc=mycompany,dc=ru
+olcRootPW: {SSHA}PKFrwbIL/zLd3gabPPLxn1vNq2jQHj4g
+olcDbIndex: objectClass eq
+olcDbIndex: cn eq,sub,subinitial
+
+dn: olcOverlay={0}dynlist,olcDatabase={1}mdb,cn=config
+objectClass: olcDynamicList
+olcOverlay: {0}dynlist
+olcDlAttrSet: {0}groupOfURLs memberURL
+olcDlAttrSet: {1}organizationalRole memberURL roleOccupant
 </pre>
--->
-<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 5. Нестандартная аутентификация</p>
-<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2019 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;24 декабря 2018 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
+
+<p class="nav"><a href="../index.html">Погружение в OpenLDAP</a> > <a href="index.html">Работа с группами в OpenLDAP</a> > <a href="dynamic2.html">Динамические группы: примеры использования наложения dynlist</a> > 5. Нестандартная авторизация</p>
+<div class="about"><a href="//pro-ldap.ru">Pro-LDAP.ru</a> 2013-2020 г. Последнее изменение страницы&thinsp;&mdash;&thinsp;9 января 2020 г. Вопросы и предложения принимаются на <a href="//pro-ldap.ru/forum/index.php?topic=41.0">форуме проекта</a>.</div>
 </body></html>
